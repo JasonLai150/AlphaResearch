@@ -13,8 +13,16 @@ Two rules that the whole suite depends on:
 
 from __future__ import annotations
 
-import fakeredis.aioredis
-import pytest
+import os
+
+# Tests use fakeredis + monkeypatched settings — never the developer's real .env Redis.
+# Force a valid-scheme URL BEFORE infra.config's module-level Settings() runs, so a
+# missing/malformed local .env ALPHA_REDIS_URL can't break collection. The scheme
+# validator itself is tested explicitly in tests/test_config_redis_url.py.
+os.environ["ALPHA_REDIS_URL"] = "redis://localhost:6379/0"
+
+import fakeredis.aioredis  # noqa: E402
+import pytest  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

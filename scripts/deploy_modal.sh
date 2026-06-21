@@ -53,4 +53,8 @@ uv run modal secret create alpha-secrets --force \
 echo "==> deploying infra/modal_app.py"
 uv run modal deploy infra/modal_app.py
 
+echo "==> warm-up + image smoke (imports torch+envpool in the real sub-agent image;"
+echo "    catches a broken image now, not on the first chat; pre-pulls the image)"
+uv run modal run infra/modal_app.py::warmup || echo "WARN: warmup failed — check the sub-agent image before demoing"
+
 echo "==> done. Flip .env: ALPHA_DISPATCH_BACKEND=modal, then re-run scripts/smoke_infra.py"
