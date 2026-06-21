@@ -6,6 +6,8 @@ import {
   treeOf,
   artifactsOf,
   graphOf,
+  consoleOf,
+  MAX_CONSOLE,
 } from "@/lib/session-reducer";
 import type { EventEnvelope, SessionState } from "@/lib/types";
 
@@ -477,5 +479,63 @@ describe("graph node live line stamping", () => {
       env({ type: "summary", job_id: "j1", payload: { summary: "converged at 0.91" } }),
     ]);
     expect(state.jobs["j1"].lastLine).toBe("converged at 0.91");
+  });
+});
+
+// ─── console events → per-job console buffer (raw stdout/stderr) ──────────────
+
+describe("console events → per-job console buffer", () => {
+  it("appends lines to the job's console with stream + stable ids, in order", () => {
+    const state = reduce([
+      env({ type: "status", job_id: "j1", payload: { status: "running" } }),
+      env({ type: "console", job_id: "j1", payload: { stream: "stderr", line: "boot" } }),
+      env({ type: "console", job_id: "j1", payload: { stream: "stdout", line: "step 1" } }),
+    ]);
+    const lines = consoleOf(state, "j1");
+    expect(lines.map((l) => l.line)).toEqual(["boot", "step 1"]);
+    expect(lines.map((l) => l.stream)).toEqual(["stderr", "stdout"]);
+    // Stable, unique ids for React keys.
+    expect(new Set(lines.map((l) => l.id)).size).toBe(2);
+  });
+
+  it("does NOT add console lines to the chat transcript", () => {
+    const state = reduce([
+      env({ type: "status", job_id: "j1", payload: { status: "running" } }),
+      env({ type: "console", job_id: "j1", payload: { stream: "stderr", line: "noise" } }),
+    ]);
+    expect(state.transcript).toHaveLength(0);
+  });
+
+  it("ignores console for an unknown job (no phantom job created)", () => {
+    const state = reduce([
+      env({ type: "console", job_id: "ghost", payload: { stream: "stderr", line: "x" } }),
+    ]);
+    expect(state.jobs["ghost"]).toBeUndefined();
+    expect(state.order).toHaveLength(0);
+  });
+
+  it("keeps console per-job (root and sub-agent are separate)", () => {
+    const state = reduce([
+      env({ type: "status", job_id: "root", depth: 0, payload: { status: "running" } }),
+      env({ type: "spawn", job_id: "child", parent_job_id: "root", depth: 1, payload: {} }),
+      env({ type: "console", job_id: "root", payload: { stream: "stderr", line: "lead" } }),
+      env({ type: "console", job_id: "child", payload: { stream: "stdout", line: "sub" } }),
+    ]);
+    expect(consoleOf(state, "root").map((l) => l.line)).toEqual(["lead"]);
+    expect(consoleOf(state, "child").map((l) => l.line)).toEqual(["sub"]);
+  });
+
+  it("caps the console buffer to MAX_CONSOLE, dropping oldest", () => {
+    const events: EventEnvelope[] = [
+      env({ type: "status", job_id: "j1", payload: { status: "running" } }),
+    ];
+    for (let i = 0; i < MAX_CONSOLE + 50; i++) {
+      events.push(
+        env({ type: "console", job_id: "j1", payload: { stream: "stdout", line: `L${i}` } })
+      );
+    }
+    const lines = consoleOf(reduce(events), "j1");
+    expect(lines).toHaveLength(MAX_CONSOLE);
+    expect(lines[lines.length - 1].line).toBe(`L${MAX_CONSOLE + 49}`); // newest kept
   });
 });

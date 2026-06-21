@@ -194,6 +194,7 @@ def sub_agent(
 
     # Same headless launcher the sub-agent Dockerfile ENTRYPOINT uses (Modal overrides
     # the image entrypoint, so we invoke it explicitly): builds the prompt from the
-    # dispatch record and execs `claude -p`, as the non-root `agent` user.
+    # dispatch record and spawns `claude -p`, relaying its console to the runner, as
+    # the non-root `agent` user.
     subprocess.run(["python3", "launch.py"], cwd="/workspace", env=env, check=False,
                    user=_AGENT)

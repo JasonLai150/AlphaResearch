@@ -13,11 +13,13 @@ export function TreePanel({
   subagents,
   artifacts,
   onExpand,
+  onSelectAgent,
 }: {
   tree: TreeNode | null;
   subagents: Subagent[];
   artifacts: WireArtifact[];
   onExpand?: () => void;
+  onSelectAgent?: (id: string) => void;
 }) {
   return (
     <aside className="flex h-full min-h-0 w-full flex-col border-l border-hairline bg-canvas">
@@ -54,7 +56,13 @@ export function TreePanel({
             {subagents.length ? (
               <div className="flex flex-col gap-2">
                 {subagents.map((a) => (
-                  <SubagentCard key={a.id} agent={a} />
+                  <SubagentCard
+                    key={a.id}
+                    agent={a}
+                    onSelect={
+                      onSelectAgent ? () => onSelectAgent(a.id) : undefined
+                    }
+                  />
                 ))}
               </div>
             ) : (

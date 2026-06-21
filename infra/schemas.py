@@ -41,6 +41,7 @@ class EventType(StrEnum):
     summary = "summary"
     error = "error"
     token = "token"  # streaming assistant text delta (typewriter UI)
+    console = "console"  # raw stdout/stderr line from an agent's child process
 
 
 class Session(BaseModel):

@@ -50,6 +50,13 @@ async def _emit(sid, jid, depth, type_, payload, parent=None) -> None:
     )
 
 
+async def _console(sid, jid, depth, stream, line, parent=None) -> None:
+    """Emit one raw-console line (mirrors what console_relay does for a real
+    agent's stdout/stderr) so the local UI can exercise the console view."""
+    await _emit(sid, jid, depth, EventType.console,
+                {"stream": stream, "line": line}, parent=parent)
+
+
 async def _msg(sid, jid, role, content) -> None:
     # Assistant narration types out as `token` deltas (typewriter). User/tool/
     # system lines stay atomic `log` events.
@@ -148,6 +155,13 @@ async def run_local_sim_session(sid: str) -> None:
     await asyncio.sleep(0.4)
     await store.mark_job_running(root, "local-sim", "local")
     await _emit(sid, root, 0, EventType.status, {"status": "running", "note": "planning"})
+    # Raw console (what used to only reach the Cloud Run log) for the console view.
+    for line in (
+        "[claude] booting research director (model=sonnet)",
+        "[claude] read CLAUDE.md + session_state.md — cold start",
+        "[research] baselines: PPO MiniGrid-DoorKey-8x8 plateau ≈ 0.40",
+    ):
+        await _console(sid, root, 0, "stderr", line)
     await _msg(
         sid, root, "assistant",
         "Scoped the goal and read the current PPO config. The plateau lines up with "
@@ -200,6 +214,13 @@ async def run_local_sim_session(sid: str) -> None:
             await _emit(sid, child[name], 1, EventType.metric,
                         {"step": step, "reward": reward, "series": "eval/reward"},
                         parent=root)
+            # Per-subagent training console (stdout of train_ppo.py in real runs).
+            await _console(
+                sid, child[name], 1, "stdout",
+                f"step={step:>6} eval/reward={reward:.3f} "
+                f"approx_kl=0.0{i+1} fps={1800 - i * 40}",
+                parent=root,
+            )
         await asyncio.sleep(_TICK)
 
     # Seeds finish.
