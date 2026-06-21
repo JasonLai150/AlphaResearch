@@ -6,42 +6,34 @@ report summaries up. One human interface; results stream live to a web UI.
 Full design + rationale: [`design.md`](./design.md).
 
 ## Architecture (one-liner)
-Two layers, two seams. **Agent layer** = Claude Code CLI containers
-(`agent/{main,sub}-agent/`) dispatching by file (`.dispatched/<job_id>.json` written by
-`dispatch_subagent.py`, schema-validated by `agent/main-agent/scripts/schemas.py`).
-**Infra layer** = experiment-kind jobs through `infra/{store,dispatch,schemas}`. **Redis**
-= state/events/queue/budget; **Modal** = experiment compute; **GCS** = artifacts; SSE = a
+A Cloud Run **service** (`orchestrator/api.py` + the `runner/` asyncio loops) is the brain.
+It spawns the **main agent** as a Cloud Run **Job** (Claude Code CLI, one per chat) and
+**sub-agents** as **Modal Functions** (one per dispatched idea). Agents have no shared
+filesystem with the runner — they push events/transcript/dispatch over an authenticated
+internal HTTP API. **Redis** = state + event bus + queue + budget (single source of truth);
+**GCS** = artifacts; sub-agents share a per-session **Modal Volume** with the runner. SSE = a
 pure Redis Stream tailer.
 
-## Status (2026-06-20)
-- Infra seam + local backend: working (experiment-kind path; agent path is now files-only).
-- Cloud backplane fully wired & verified: **Redis Cloud + GCS + Modal** sandbox round-trip
-  (local → spawn → sandbox writes shared Redis/GCS → read back).
-- Agent harness flipped to **Claude Code CLI** (files-only, no SDK loop): main-agent
-  + sub-agent each have `CLAUDE.md` + `.claude/settings.json` + `skills/` + hooks; the
-  containers boot `claude --dangerously-skip-permissions`. Dispatch is a Bash call to
-  `scripts/dispatch_subagent.py` validated by a `ResearchPlan` schema + PreToolUse hook;
-  WebFetch capped by PostToolUse hook.
-- Agent-harness Dockerfiles landed (`deploy/{main,sub}-agent.Dockerfile` + `.dockerignore`):
-  `python:3.12-slim-bookworm` + Node 22 + `@anthropic-ai/claude-code` + `pydantic` + the agent
-  workspace; sub-agent additionally bakes `envpool==0.8.4 / gymnasium / minigrid / numpy /
-  matplotlib` (amd64 forced for the EnvPool wheel). Both ENTRYPOINT `claude
-  --dangerously-skip-permissions`. No `infra/` or `orchestrator/` inside — the orchestrator
-  service Dockerfile is a separate Phase-6 concern.
-- Not yet proven: real Claude lead agent orchestrating over Modal end-to-end; live web demo;
-  runner that turns `.dispatched/*.json` records into actual sub-agent containers.
+## Status (2026-06-20, audited)
+- Infra seam + store + guardrails + local backend: working, **verified live** (`smoke_infra`).
+- **Redis Cloud** seam verified live. **Modal+GCS** round-trip verified *once* @`ed90b69` but not
+  reproducible from the committed tree (no app deployed, backend=local); needs re-establishing.
+- **The runner now EXISTS** (PR #8, branch `docker-GCP-modal`): `runner/` session/dispatch/reconcile
+  loops, Cloud Run + Modal clients, internal API, per-session tokens, leader lease, GCS uploader —
+  with a 71-test suite (fakeredis) and two adversarial-review passes. Agent **Dockerfiles** + a
+  Cloud Run **deploy script** + a **GCP bootstrap script** also landed.
+- **Not yet proven on real cloud:** the sub-agent result round-trip. Cloud Run can't mount a Modal
+  Volume, so `reload_volume()` must hydrate via the Modal SDK (or sub-agents push results) before a
+  live run completes — see `docs/backend-mvp-notes.md`. Real RL training + web demo still pending.
 
-## Next
-- Build the runner that watches `.dispatched/` and spawns sub-agent containers
-  (Modal or Docker) per dispatch record; write back `<job_id>.result.json`.
-  Seam ready: API enqueues `sessions:queue`; infra runs experiment jobs only and
-  leaves agent jobs `pending` for the runner (deleted-`run_agent` refs removed).
-- End-to-end main-agent container run via the runner (CLI emits `.dispatched/*.json` →
-  runner spawns sub-agent containers → results back); then API + web UI live demo.
-- Replace synthetic experiment stub with real minigrid+PPO training.
-- Cloud Run deploy (Phase 6).
+## Next (milestones — see tasks.md for granular checkboxes)
+- M0 ✅ tests · M1 ✅ runner · M2 ✅ containers · M7 ✅ deploy tooling — delivered in PR #8.
+- M3/M4: prove the depth-0 + sub-agent round-trip on real cloud (fix the volume bridge first).
+- M5: replace the synthetic stub with real minigrid+PPO. M6: web UI live demo (charts, tree, resume).
+- M7 (execute): run the bootstrap + deploy scripts + `modal deploy`; verify Redis reachable from Cloud Run.
 
 ## Open assumptions to challenge
 - Experiments are still **synthetic** (deterministic stub), not real RL training.
 - GCS bucket is **public-read** for the demo (revertible IAM binding).
 - Coordination is P0 "summaries-up"; the population/synthesis research loop is deferred.
+- Cloud Run ↔ Modal Volume access is the one unproven seam for a live sub-agent round-trip.

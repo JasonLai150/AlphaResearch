@@ -1,46 +1,50 @@
 # AlphaResearch — Tasks
 
-## Infra & backbone
-- [x] Repo scaffold + infra seam (`store` / `dispatch` / `schemas`)
-- [x] ~~Self-similar `run_agent` + tools (dispatch/report/query/finalize)~~ — SDK-loop era; superseded by the Claude Code CLI files-only flip (`agent/{main,sub}-agent/`).
-- [x] Guardrails: max_depth / atomic fanout / atomic budget — `infra/dispatch.py` for experiment jobs; agent fan-out is enforced by the dispatch script + PreToolUse hook + runner.
-- [x] Local backend e2e (`scripts/smoke_infra.py`)
+Legend: `[x]` done & verified · `[~]` code exists but unverified/partial · `[ ]` not started.
+Milestones **M0→M7** are ordered by dependency. Each item names the file to touch so it's
+pickup-able cold. The "why" for each milestone lives in `plan.md`.
 
-## Cloud bring-up
-- [x] Redis Cloud wired + verified (resilient client for variable latency)
-- [x] GCS artifacts wired + verified (public-read demo; https URLs)
-- [x] Modal app deployed (`scripts/deploy_modal.sh`, secret via base64)
-- [x] Modal sandbox round-trip verified (`scripts/smoke_modal.py`)
-- [x] Async spawn fix (`spawn.aio`) for parallel dispatch
+## Backbone (done)
+- [x] Repo scaffold + infra seam (`infra/store` · `infra/dispatch` · `infra/schemas`)
+- [x] Guardrails: max_depth · atomic fanout (`claim/release_fanout`) · atomic budget (`decr/incr_budget`)
+- [x] Store seam verified live (`scripts/smoke_infra.py`: RedisJSON docs, budget, children, event stream)
+- [x] Redis Cloud client — resilient timeouts/keepalive/retry (`store.get_redis`), verified live
+- [x] Agent harness FILES: main-agent + sub-agent `CLAUDE.md` + `settings.json` + skills + hooks
+- [x] Infra→runner handoff seam: API enqueues `sessions:queue`; dispatch runs experiment jobs only
+- [x] FastAPI + SSE: `POST /sessions`, `GET /sessions/{id}/stream` (`orchestrator/api.py`)
+- [x] Next.js shell wired to real endpoints, builds clean (`web/`) — charts/tree still stubbed (see M6)
 
-## Agent harness (Claude Code CLI, files-only)
-- [x] `agent/main-agent/`: CLAUDE.md + `.claude/settings.json` + skills (`research`, `dispatch-subagents`)
-- [x] `agent/main-agent/scripts/`: `schemas.py` (ResearchPlan/Idea/DiversityTag) + `dispatch_subagent.py`
-- [x] `agent/main-agent/.claude/hooks/`: `validate_dispatch.py` (PreToolUse Bash) + `cap_web_fetch.py` (PostToolUse Web*)
-- [x] `agent/sub-agent/` (minimal): CLAUDE.md + `.claude/settings.json` (Web* denied) + `validated-findings` skill
-- [x] Dockerfiles + entrypoints (`claude --dangerously-skip-permissions`) for both containers
-      (`deploy/main-agent.Dockerfile`, `deploy/sub-agent.Dockerfile`, `.dockerignore`;
-      sub-agent ships envpool/gymnasium/minigrid baked in, amd64 forced)
-- [x] Runner: `runner/` package — session/dispatch/reconcile loops spawn main-agent (Cloud Run
-      Job) + sub-agents (Modal), reconcile lifecycle, ship artifacts to GCS. Dispatch records
-      arrive via `POST /internal/dispatch` (no shared FS); results via per-session Modal volume.
-- [x] Rewire infra to runner handoff: removed deleted-`run_agent` imports; API enqueues
-      `sessions:queue`; dispatch/modal run experiment-only; worker/run_depth0 are seams
-      (imports green, ruff clean, `smoke_infra` passes)
+## Backend MVP — DELIVERED in PR #8 (branch `docker-GCP-modal`)
+This PR builds the runtime that M0–M2 + M7 called for, on the **Cloud-Run-Job main-agent**
+architecture (revision of the original plan): main-agent = Cloud Run Job, sub-agents = Modal
+Functions, dispatch via an authenticated internal HTTP API (no shared FS to the main agent).
+See `docs/backend-mvp-notes.md` for the full SEV-fix map + the one remaining gap.
+- [x] **M0 — test net**: `tests/` stood up — store, internal API, hooks, main-agent scripts,
+      runner loops, cloud-run client, gcs uploader, full API, e2e smoke (71 tests, fakeredis).
+- [x] **M1 — the runner** (`runner/`): session/dispatch/reconcile loops; spawns main-agent Cloud
+      Run Job (`cloud_run_client`) + sub-agent Modal Fns (`modal_client`); reconciles lifecycle,
+      ships artifacts to GCS; single-leader Redis lease (replaces the XREADGROUP design).
+- [x] **Internal API** (`runner/internal_api.py`): events / transcript / dispatch / children with
+      per-session ephemeral-token auth + dispatch depth/parent/fanout validation; hidden from OpenAPI.
+- [x] **M2 — containers**: `deploy/{main-agent,sub-agent,api}.Dockerfile` (api image build-verified).
+- [x] **M7 — deploy tooling**: `scripts/gcp_bootstrap.sh` (APIs/repo/bucket/SAs/IAM/secrets) +
+      `scripts/deploy_cloudrun.sh` (service + main-agent Job); runbook `docs/gcp-setup.md`.
+- [x] SEV-1..13 ship-blocker/this-week fixes applied + two adversarial-review passes folded in.
+- [x] Schema v2 (Job.backend/sandbox_id, Message, +queued/+cancelled; dropped modal_call_id).
 
-## Backend MVP (this branch)
-- [x] Schema v2 + store helpers (transcript, dispatch queue, child statuses, status index,
-      full-session read, per-session tokens, leader lease, deterministic artifact ids)
-- [x] Internal HTTP API (events/transcript/dispatch/children) — per-session token auth,
-      dispatch depth/parent/fanout validation, hidden from OpenAPI
-- [x] Agent hooks (events/transcript push; sub-agent atomic result + `.done` sentinel) + main-agent HTTP child scripts
-- [x] API wiring: `POST /sessions {user_id,goal}`, `GET /sessions/{sid}/full`, runner startup + Redis ping
-- [x] `deploy/api.Dockerfile` + idempotent `scripts/deploy_cloudrun.sh` (service + main-agent Job)
-- [x] Unit + e2e tests (`tests/`): store, internal API, hooks, scripts, runner loops, cloud-run, gcs, full API, e2e smoke
-- [x] SEV-1..13 ship-blocker/this-week fixes applied + adversarially reviewed
+## Cloud bring-up (status)
+- [~] GCS artifacts: code complete + tested via mocks; live GCS path not yet exercised end-to-end
+- [ ] Modal app deployed — NOT deployed (`modal deploy infra/modal_app.py` pending; needs secrets)
+- [ ] Cloud Run deployed — scripts ready but not yet run against the project (APIs were disabled)
 
-## Next
-- [ ] Live cloud round-trip: real Cloud Run Job + Modal sub-agents end-to-end (mocks pass; cloud run pending)
-- [ ] API + web UI live demo over the cloud backplane
-- [ ] `run_experiment_real`: real minigrid+PPO training (currently delegates to stub)
-- [x] ~~Redeploy Modal image before flipping `max_depth` ≥ 2 (nested async spawn)~~ — moot: CLI sub-agents are leaves (no in-container dispatch tool), so agent depth caps at 2 by design.
+## Remaining milestones
+- [~] **M3/M4 — real depth-0 + sub-agent round-trip**: implemented + mock-tested (`test_e2e_smoke`),
+      NOT verified on real cloud. **Blocker:** runner↔Modal-volume bridge — Cloud Run can't mount a
+      Modal Volume, so sub-agent results won't return until `reload_volume()` hydrates via the Modal
+      SDK, or sub-agents push results to a new `/internal/result` (see `docs/backend-mvp-notes.md`).
+- [ ] **M5 — real RL training**: `run_experiment_real` still delegates to the synthetic stub; add a
+      short minigrid+PPO loop (lazy torch/sb3) and the deps to the Modal image.
+- [ ] **M6 — web UI live demo**: plot `JobNode.rewards` (recharts), real parent/child tree via
+      `parentJobId`, EventSource `last_event_id` resume + reconnect.
+- [ ] **M7 — execute the deploy**: run `gcp_bootstrap.sh` + `deploy_cloudrun.sh` + `modal deploy`,
+      then verify Redis Cloud reachable from Cloud Run egress + a `/healthz` smoke.
