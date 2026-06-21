@@ -12,6 +12,7 @@ import { CLERK_ENABLED } from "@/lib/auth-config";
 export const metadata: Metadata = {
   title: "Alpha Research — Overview",
   description: "Recursive automated RL research console",
+  icons: { icon: "/image.png" },
 };
 
 // Dark-canvas theming for Clerk's hosted components. Variables set the palette;

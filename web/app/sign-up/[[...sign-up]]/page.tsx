@@ -2,12 +2,14 @@
 
 import { SignUp } from "@clerk/nextjs";
 
+import { Logo } from "@/components/logo";
 import { CLERK_ENABLED } from "@/lib/auth-config";
 
 export default function SignUpPage() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-8 bg-canvas px-6 py-12">
-      <header className="text-center">
+      <header className="flex flex-col items-center text-center">
+        <Logo size={44} className="mb-3" />
         <h1 className="text-lg font-medium text-ink">Alpha Research</h1>
         <p className="mt-1 text-sm text-mute">
           Create your research console account

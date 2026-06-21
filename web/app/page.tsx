@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Menu, Network, Sparkles } from "lucide-react";
+import { ArrowLeft, Menu, Network } from "lucide-react";
 
 import { useAppAuth } from "@/components/auth/app-auth";
 import { AppSidebar } from "@/components/app-sidebar";
@@ -9,6 +9,7 @@ import { ChatComposer } from "@/components/chat-composer";
 import { ChatTranscript } from "@/components/chat-transcript";
 import { ContextBar } from "@/components/context-bar";
 import { Eyebrow } from "@/components/eyebrow";
+import { Logo } from "@/components/logo";
 import { SessionHeader } from "@/components/session-header";
 import { TreePanel } from "@/components/tree-panel";
 import { Button } from "@/components/ui/button";
@@ -153,7 +154,7 @@ export default function Page() {
                 <Menu className="size-4" />
               )}
             </Button>
-            <Sparkles className="size-4 text-sunset md:hidden" aria-hidden />
+            <Logo size={18} className="md:hidden" />
             <span className="flex-1 truncate text-sm">Alpha Research</span>
             {activeId && (
               <Button
@@ -193,7 +194,7 @@ export default function Page() {
           ) : (
             <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-6 px-6">
               <div className="flex flex-col items-center gap-3 text-center">
-                <Sparkles className="size-7 text-sunset" aria-hidden />
+                <Logo size={36} />
                 <Eyebrow>New research session</Eyebrow>
                 <h1 className="max-w-xl text-2xl tracking-[-0.02em] text-ink">
                   What should the lead agent investigate?

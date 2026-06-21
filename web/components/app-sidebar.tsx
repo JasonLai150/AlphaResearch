@@ -9,7 +9,6 @@ import {
   Plus,
   Search,
   Settings,
-  Sparkles,
 } from "lucide-react";
 
 import { UserButton } from "@clerk/nextjs";
@@ -21,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Eyebrow } from "@/components/eyebrow";
+import { Logo } from "@/components/logo";
 import { cn } from "@/lib/utils";
 import type { WireSession } from "@/lib/types";
 
@@ -76,7 +76,7 @@ export function AppSidebar({
   return (
     <aside className="flex h-full min-h-0 w-full flex-col gap-5 border-r border-hairline bg-canvas px-3 py-4">
       <div className="flex items-center gap-2 px-2">
-        <Sparkles className="size-4 text-sunset" aria-hidden />
+        <Logo size={20} />
         <span className="text-[15px] tracking-[-0.01em]">Alpha Research</span>
       </div>
 
