@@ -6,8 +6,17 @@ Most settings use the ALPHA_ prefix; a few honor external conventions
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Resolve .env against the repo root (this file is infra/config.py) so the working
+# directory doesn't matter — launching from web/ or anywhere else loads the same .env
+# instead of silently falling back to defaults. In prod (Cloud Run) config comes from
+# injected env vars, which take precedence, and .env is absent from the image, so this
+# path simply finds nothing and behavior is unchanged.
+_ENV_FILE = str(Path(__file__).resolve().parent.parent / ".env")
 
 # redis-py's from_url() only accepts these schemes; anything else raises deep inside a
 # swallowed loop exception (leadership_loop) and the runner silently never leads. Validate
@@ -18,7 +27,7 @@ _VALID_REDIS_SCHEMES = ("redis://", "rediss://", "unix://")
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="ALPHA_",
-        env_file=".env",
+        env_file=_ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
     )
