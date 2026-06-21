@@ -359,6 +359,12 @@ async def emit_event(event: EventEnvelope) -> str:
         }),
         level="info",
     )
+    # NOTE: the stream is intentionally NOT trimmed here. The frontend rebuilds
+    # ALL view state by replaying this stream from "0" (see web/hooks/use-session.ts),
+    # so a MAXLEN trim would silently drop chat/token history on reconnect. Console
+    # streaming raises per-session volume; bounding it properly means a SEPARATE,
+    # independently-capped console stream (+ its own SSE channel) — tracked as a
+    # follow-up rather than capping the replay-critical events stream.
     return await get_redis().xadd(
         _events_key(event.session_id), {"data": event.model_dump_json()}
     )

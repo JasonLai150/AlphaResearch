@@ -7,7 +7,8 @@ export type EventType =
   | "artifact"
   | "summary"
   | "error"
-  | "token";
+  | "token"
+  | "console";
 
 export interface EventEnvelope {
   session_id: string;
@@ -211,6 +212,16 @@ export interface JobView {
   lastLine?: string;
   /** True while token deltas for this job are mid-flight (drives the node caret). */
   streaming?: boolean;
+  /** Raw stdout/stderr console lines for this job (from `console` events). */
+  console?: ConsoleLine[];
+}
+
+/** One raw console line streamed from an agent's child process. */
+export interface ConsoleLine {
+  /** Stable, unique id for React keys (derived from the monotonic seq). */
+  id: string;
+  stream: "stdout" | "stderr";
+  line: string;
 }
 
 export interface TranscriptItem {

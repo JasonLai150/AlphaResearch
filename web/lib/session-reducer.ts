@@ -1,5 +1,6 @@
 import type {
   AgentStatus,
+  ConsoleLine,
   EventEnvelope,
   GraphLink,
   GraphNode,
@@ -36,6 +37,8 @@ export function emptyState(
 // the UI never notices; oldest entries are dropped first.
 const MAX_TRANSCRIPT = 2000;
 const MAX_REWARDS = 1000;
+/** Per-job raw console buffer cap (oldest lines dropped first). */
+export const MAX_CONSOLE = 1000;
 
 /*
   Append a transcript item with a collision-free id. The id derives from a
@@ -141,6 +144,31 @@ export function applyEvent(prev: SessionState, env: EventEnvelope): SessionState
       });
     }
     return stampJobLine(next, env.job_id, line, !final);
+  }
+
+  // Raw console (stdout/stderr) rides the bus as `console` events. It goes into
+  // a per-job buffer — NOT the chat transcript — so the operational console has
+  // its own view. Like token/log, it only ever updates an EXISTING job (the
+  // job's spawn/status precedes its console in the totally-ordered stream), so a
+  // console line never creates a phantom job.
+  if (env.type === "console") {
+    const id = env.job_id;
+    const job = id ? prev.jobs[id] : undefined;
+    if (!job) return prev;
+    const seq = prev.seq;
+    const entry: ConsoleLine = {
+      id: `c${seq}`,
+      stream: p.stream === "stdout" ? "stdout" : "stderr",
+      line: String(p.line ?? ""),
+    };
+    const next = [...(job.console ?? []), entry];
+    const buf =
+      next.length > MAX_CONSOLE ? next.slice(next.length - MAX_CONSOLE) : next;
+    return {
+      ...prev,
+      seq: seq + 1,
+      jobs: { ...prev.jobs, [id]: { ...job, console: buf } },
+    };
   }
 
   // An `error` event surfaces as a system transcript line (#13).
@@ -299,6 +327,11 @@ export function treeOf(state: SessionState): TreeNode | null {
 
 export function artifactsOf(state: SessionState): WireArtifact[] {
   return state.order.flatMap((id) => state.jobs[id].artifacts);
+}
+
+/** Raw console (stdout/stderr) lines for one job, oldest→newest. */
+export function consoleOf(state: SessionState, jobId: string | null): ConsoleLine[] {
+  return (jobId && state.jobs[jobId]?.console) || [];
 }
 
 /** True while any job is still active (running/queued/pending). */

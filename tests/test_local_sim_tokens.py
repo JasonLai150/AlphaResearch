@@ -35,6 +35,24 @@ def test_chunk_text_preserves_leading_and_trailing_whitespace():
 
 
 @pytest.mark.asyncio
+async def test_console_helper_emits_console_event(monkeypatch):
+    events = []
+
+    async def fake_emit(ev):
+        events.append(ev)
+
+    monkeypatch.setattr(store, "emit_event", fake_emit)
+
+    await local_sim._console("s1", "j_c", 1, "stderr", "boot: loading checkpoint", parent="j0")
+
+    assert len(events) == 1
+    ev = events[0]
+    assert ev.type is EventType.console
+    assert ev.payload == {"stream": "stderr", "line": "boot: loading checkpoint"}
+    assert ev.job_id == "j_c" and ev.depth == 1 and ev.parent_job_id == "j0"
+
+
+@pytest.mark.asyncio
 async def test_stream_assistant_emits_tokens_then_persists(monkeypatch):
     events = []
     messages = []
