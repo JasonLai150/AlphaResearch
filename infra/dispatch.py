@@ -125,7 +125,7 @@ async def _launch(job: Job) -> None:
         # Set status BEFORE the remote can start; afterwards write only the call id,
         # so a fast remote job that already reached `done` is never demoted to `running`.
         await store.set_job_status(job.id, "running")
-        call_id = spawn_job(job.id)
+        call_id = await spawn_job(job.id)
         await store.update_job(job.id, modal_call_id=call_id)
     else:
         raise DispatchError(f"unknown DISPATCH_BACKEND={backend!r}")

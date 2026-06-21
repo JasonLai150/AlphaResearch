@@ -50,6 +50,29 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("ANTHROPIC_API_KEY", "ALPHA_ANTHROPIC_API_KEY"),
     )
+    # GCS service-account key for Modal containers. Prefer base64 (single-line; the raw
+    # multi-line JSON hangs `modal secret create` on the command line). JSON kept as a
+    # fallback for other injection paths.
+    google_credentials_b64: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "GOOGLE_APPLICATION_CREDENTIALS_B64", "ALPHA_GOOGLE_CREDENTIALS_B64"
+        ),
+    )
+    google_credentials_json: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "GOOGLE_APPLICATION_CREDENTIALS_JSON", "ALPHA_GOOGLE_CREDENTIALS_JSON"
+        ),
+    )
+    # SA key file path for local runs (read from .env, which does NOT export to os.environ,
+    # so storage.Client() can't auto-discover it — we pass it explicitly).
+    google_credentials_file: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "GOOGLE_APPLICATION_CREDENTIALS", "ALPHA_GOOGLE_CREDENTIALS_FILE"
+        ),
+    )
 
 
 settings = Settings()
