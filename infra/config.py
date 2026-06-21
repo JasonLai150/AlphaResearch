@@ -6,7 +6,7 @@ Most settings use the ALPHA_ prefix; a few honor external conventions
 
 from __future__ import annotations
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -139,6 +139,19 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("ALPHA_CLERK_ISSUER", "CLERK_ISSUER"),
     )
+    clerk_audience: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ALPHA_CLERK_AUDIENCE", "CLERK_AUDIENCE"),
+    )
+
+    @model_validator(mode="after")
+    def _auth_requires_issuer(self) -> "Settings":
+        # Fail fast: verifying JWKS-signed tokens without an issuer check is unsafe.
+        if self.clerk_jwks_url and not self.clerk_issuer:
+            raise ValueError(
+                "ALPHA_CLERK_ISSUER is required when ALPHA_CLERK_JWKS_URL is set"
+            )
+        return self
 
 
 settings = Settings()

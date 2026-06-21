@@ -26,7 +26,6 @@ export function emptyState(
     jobs: {},
     order: [],
     transcript: [],
-    lastEventId: null,
   };
 }
 
@@ -123,6 +122,7 @@ export function applyEvent(prev: SessionState, env: EventEnvelope): SessionState
       ) {
         job.lastReward = p.metrics.best_reward;
       }
+      // A "partial" reported_status collapses to done (no distinct partial state).
       job.status =
         String(p.reported_status ?? "").toLowerCase() === "failed"
           ? "failed"

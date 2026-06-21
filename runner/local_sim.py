@@ -208,6 +208,25 @@ async def run_local_sim_session(sid: str) -> None:
                  "metrics": {"best_reward": 0.81}})
 
 
+async def _guarded_run(sid: str) -> None:
+    """Run a sim session; on failure, mark the root failed so the UI stops spinning."""
+    try:
+        await run_local_sim_session(sid)
+    except Exception as e:  # noqa: BLE001
+        print(f"[local_sim] run failed for {sid}: {e!r}")
+        root = await store.get_root_job(sid)
+        if root:
+            await _emit(sid, root, 0, EventType.status,
+                        {"status": "failed", "reason": "local-sim error"})
+
+
+async def _guarded_reply(sid: str, content: str) -> None:
+    try:
+        await respond_to_message(sid, content)
+    except Exception as e:  # noqa: BLE001
+        print(f"[local_sim] reply failed for {sid}: {e!r}")
+
+
 async def local_sim_loop() -> None:
     """Tail the sessions queue and play a simulated run for each new session."""
     while True:
@@ -218,7 +237,7 @@ async def local_sim_loop() -> None:
                 await store.delete_stream_entry(store.SESSIONS_QUEUE, entry_id)
                 sid = fields.get("session_id")
                 if sid:
-                    asyncio.create_task(run_local_sim_session(sid))
+                    asyncio.create_task(_guarded_run(sid))
         except Exception as e:  # noqa: BLE001
             print(f"[local_sim] {e!r}")
             await asyncio.sleep(1.0)
@@ -262,7 +281,7 @@ async def chat_inbox_loop() -> None:
                 sid = fields.get("session_id")
                 if sid:
                     asyncio.create_task(
-                        respond_to_message(sid, fields.get("content", ""))
+                        _guarded_reply(sid, fields.get("content", ""))
                     )
         except Exception as e:  # noqa: BLE001
             print(f"[local_sim chat] {e!r}")

@@ -201,7 +201,6 @@ export interface SessionState {
   /** Job ids in first-seen order. */
   order: string[];
   transcript: TranscriptItem[];
-  lastEventId: string | null;
 }
 
 /** SSE connection lifecycle, surfaced to the UI. */

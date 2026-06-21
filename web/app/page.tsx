@@ -27,6 +27,7 @@ export default function Page() {
   const { userId, getToken } = useAppAuth();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState(false);
   const { sessions, refresh } = useSessions(userId, getToken);
   const { state, phase } = useSession(activeId, getToken);
 
@@ -54,6 +55,7 @@ export default function Page() {
         // Give the session a moment to register, then refresh the sidebar.
         setTimeout(refresh, 400);
       } else {
+        setPending(true);
         await sendMessage(activeId, text, await getToken());
       }
     } catch (e) {
@@ -63,12 +65,22 @@ export default function Page() {
     }
   }
 
+  // Show "working" on a follow-up turn until the next assistant reply arrives.
+  const lastRole = state.transcript[state.transcript.length - 1]?.role;
+  useEffect(() => {
+    if (lastRole === "assistant") setPending(false);
+  }, [lastRole, state.transcript.length]);
+  useEffect(() => {
+    setPending(false);
+  }, [activeId]);
+
   const root = rootJob(state);
-  // The run is "working" while the lead agent is active (a parked, queued
-  // sub-agent shouldn't keep the indicator spinning forever).
-  const running = root
-    ? root.status === "running" || root.status === "pending"
-    : phase === "connecting" || phase === "streaming";
+  // Working while the lead agent is active, or a follow-up is awaiting a reply.
+  // (A parked, queued sub-agent shouldn't keep the indicator spinning forever.)
+  const running =
+    (root
+      ? root.status === "running" || root.status === "pending"
+      : phase === "connecting" || phase === "streaming") || pending;
 
   return (
     <TooltipProvider delayDuration={150}>

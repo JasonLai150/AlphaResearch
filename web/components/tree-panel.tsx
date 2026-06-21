@@ -1,3 +1,5 @@
+import { FileDown } from "lucide-react";
+
 import { AgentTree } from "@/components/agent-tree";
 import { Eyebrow } from "@/components/eyebrow";
 import { SubagentCard } from "@/components/subagent-card";
@@ -51,24 +53,51 @@ export function TreePanel({
             <div className="flex flex-col gap-2.5">
               <Eyebrow as="h2">Artifacts</Eyebrow>
               <div className="flex flex-col gap-3">
-                {artifacts.map((a) => (
-                  <figure
-                    key={a.id}
-                    className="overflow-hidden rounded-lg border border-hairline bg-canvas-card"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={artifactUrl(a.url)}
-                      alt={a.caption ?? a.kind}
-                      className="block w-full"
-                    />
-                    {a.caption && (
-                      <figcaption className="px-3 py-2 text-[11px] text-mute">
-                        {a.caption}
-                      </figcaption>
-                    )}
-                  </figure>
-                ))}
+                {artifacts.map((a) => {
+                  const isImage =
+                    a.kind === "plot" ||
+                    /\.(png|jpe?g|gif|svg|webp)$/i.test(a.url);
+                  return (
+                    <figure
+                      key={a.id}
+                      className="overflow-hidden rounded-lg border border-hairline bg-canvas-card"
+                    >
+                      {isImage ? (
+                        <>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={artifactUrl(a.url)}
+                            alt={a.caption ?? a.kind}
+                            className="block w-full"
+                          />
+                          {a.caption && (
+                            <figcaption className="px-3 py-2 text-[11px] text-mute">
+                              {a.caption}
+                            </figcaption>
+                          )}
+                        </>
+                      ) : (
+                        <a
+                          href={artifactUrl(a.url)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="flex items-center gap-2 px-3 py-2.5 text-[12px] text-body transition-colors hover:bg-canvas-soft"
+                        >
+                          <FileDown
+                            className="size-3.5 shrink-0 text-mute"
+                            aria-hidden
+                          />
+                          <span className="min-w-0 flex-1 truncate">
+                            {a.caption ?? a.kind}
+                          </span>
+                          <span className="shrink-0 font-mono text-[10px] uppercase tracking-wider text-mute">
+                            {a.kind}
+                          </span>
+                        </a>
+                      )}
+                    </figure>
+                  );
+                })}
               </div>
             </div>
           )}

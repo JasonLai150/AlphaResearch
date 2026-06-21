@@ -89,6 +89,7 @@ export function streamSession(
   let closed = false;
   let lastId: string | null = null;
   let controller: AbortController | null = null;
+  let fails = 0; // consecutive connect failures (reset once streaming)
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
   (async function loop() {
@@ -107,6 +108,7 @@ export function streamSession(
           cache: "no-store",
         });
         if (!res.ok || !res.body) throw new Error(`stream ${res.status}`);
+        fails = 0;
         opts.onPhase?.("streaming");
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -139,10 +141,13 @@ export function streamSession(
         }
       } catch {
         if (closed) break;
+        fails += 1;
       }
       if (closed) break;
-      opts.onPhase?.("reconnecting");
-      await sleep(1500);
+      // Surface a real failure after a few tries (drives the "disconnected" UI),
+      // and back off so we don't hammer a downed server.
+      opts.onPhase?.(fails >= 3 ? "error" : "reconnecting");
+      await sleep(Math.min(1500 * Math.max(fails, 1), 10000));
     }
     opts.onPhase?.("closed");
   })();

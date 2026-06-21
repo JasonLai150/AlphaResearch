@@ -1,6 +1,12 @@
 "use client";
 
-import { createContext, useContext, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  type ReactNode,
+} from "react";
 import { useAuth, useUser } from "@clerk/nextjs";
 
 import { CLERK_ENABLED, DEMO_USER, DEMO_USER_ID } from "@/lib/auth-config";
@@ -34,26 +40,35 @@ function ClerkAuthProvider({ children }: { children: ReactNode }) {
   const { userId, getToken } = useAuth();
   const { user } = useUser();
 
-  const value: AppAuth = {
-    userId: userId ?? DEMO_USER_ID,
-    user: user
-      ? {
-          name: user.fullName ?? user.username ?? "User",
-          handle:
-            user.username ??
-            user.primaryEmailAddress?.emailAddress?.split("@")[0] ??
-            "user",
-          role: "Member",
-          initials: (
-            user.firstName?.[0] ??
-            user.username?.[0] ??
-            "U"
-          ).toUpperCase(),
-        }
-      : DEMO_USER,
-    getToken: async () => (await getToken()) ?? undefined,
-    clerk: true,
-  };
+  // Stable identity so downstream effect deps (use-sessions) don't churn.
+  const token = useCallback(
+    async () => (await getToken()) ?? undefined,
+    [getToken]
+  );
+
+  const value = useMemo<AppAuth>(
+    () => ({
+      userId: userId ?? DEMO_USER_ID,
+      user: user
+        ? {
+            name: user.fullName ?? user.username ?? "User",
+            handle:
+              user.username ??
+              user.primaryEmailAddress?.emailAddress?.split("@")[0] ??
+              "user",
+            role: "Member",
+            initials: (
+              user.firstName?.[0] ??
+              user.username?.[0] ??
+              "U"
+            ).toUpperCase(),
+          }
+        : DEMO_USER,
+      getToken: token,
+      clerk: true,
+    }),
+    [userId, user, token]
+  );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

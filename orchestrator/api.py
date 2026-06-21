@@ -22,7 +22,7 @@ from sse_starlette.sse import EventSourceResponse
 from infra import store
 from infra.config import settings
 from infra.schemas import EventEnvelope, EventType, Job, JobKind, JobStatus, Message
-from orchestrator.auth import verified_user_id
+from orchestrator.auth import require_session_access, verified_user_id
 from runner.internal_api import router as internal_router
 
 
@@ -35,7 +35,9 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         print(f"[startup] redis ping failed (continuing): {e!r}")
     tasks = []
-    if settings.runner_enabled:
+    # local_sim is the dev stand-in FOR the runner — never run both (they'd both
+    # drain sessions:queue and double-spawn).
+    if settings.runner_enabled and not settings.local_sim:
         from runner.main import start_runner_tasks
         tasks = start_runner_tasks()
     if settings.local_sim:
@@ -121,14 +123,14 @@ async def list_sessions(
 
 @app.get("/sessions/{sid}")
 async def get_session(
-    sid: str, _uid: str | None = Depends(verified_user_id)
+    sid: str, _uid: str | None = Depends(require_session_access)
 ) -> dict:
     return await store.read_state(sid)
 
 
 @app.get("/sessions/{sid}/full")
 async def full_session(
-    sid: str, _uid: str | None = Depends(verified_user_id)
+    sid: str, _uid: str | None = Depends(require_session_access)
 ) -> dict:
     """Everything the chat UI needs to resume: session, job tree, runs, transcript,
     artifacts."""
@@ -141,7 +143,7 @@ class MessageIn(BaseModel):
 
 @app.post("/sessions/{sid}/messages")
 async def post_message(
-    sid: str, body: MessageIn, _uid: str | None = Depends(verified_user_id)
+    sid: str, body: MessageIn, _uid: str | None = Depends(require_session_access)
 ) -> dict:
     """A user follow-up turn (multi-turn chat). Persist it, stream it back as a log
     event, and enqueue it for the conversational agent (local-sim answers in dev)."""
@@ -166,7 +168,7 @@ async def stream(
     sid: str,
     request: Request,
     last_event_id: str | None = Header(default=None),
-    _uid: str | None = Depends(verified_user_id),
+    _uid: str | None = Depends(require_session_access),
 ):
     # On first connect (no Last-Event-ID) replay from the start so the UI never
     # misses events; reconnects pass a real id and resume exactly after it.
