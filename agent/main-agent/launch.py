@@ -15,12 +15,23 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
 
 _BOOTSTRAP_ATTEMPTS = 5
+
+# Post-deploy smoke (ALPHA_SMOKE=1, set as a per-execution override by
+# scripts/verify_deploy.sh): prove the *deployed* image actually boots and can
+# reach Anthropic, using the real container + service account + mounted secrets —
+# without a runner, a session token, or a 4h agent run. A created Cloud Run Job is
+# never exercised until the first real chat, so this is the only quick, high-fidelity
+# signal that the agent image isn't silently broken on GCP.
+_SMOKE_MODEL = "claude-haiku-4-5-20251001"  # cheapest model; the round-trip is what matters
+_SMOKE_TIMEOUT_S = 120
 
 
 def _bootstrap(runner_url: str, token: str) -> dict:
@@ -51,7 +62,42 @@ def _prompt(goal: str) -> str:
     )
 
 
+def _smoke() -> None:
+    """Real `claude` round-trip inside the deployed container. Exits 0 only if the
+    Claude Code CLI is installed, ANTHROPIC_API_KEY is mounted+valid, and network
+    egress to Anthropic works. The process exit code is the Cloud Run execution's
+    exit code, so `gcloud run jobs execute --wait` surfaces any failure directly."""
+    problems = []
+    if shutil.which("claude") is None:
+        problems.append("`claude` not on PATH (broken agent image)")
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        problems.append("ANTHROPIC_API_KEY missing (secret not mounted)")
+    if problems:
+        raise SystemExit("[smoke] FAIL: " + "; ".join(problems))
+
+    model = os.environ.get("ALPHA_MODEL") or _SMOKE_MODEL
+    print(f"[smoke] claude round-trip model={model} timeout={_SMOKE_TIMEOUT_S}s", file=sys.stderr)
+    try:
+        r = subprocess.run(
+            ["claude", "-p", "Respond with exactly: SMOKE_OK",
+             "--model", model, "--dangerously-skip-permissions"],
+            capture_output=True, text=True, timeout=_SMOKE_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        raise SystemExit(f"[smoke] FAIL: claude timed out after {_SMOKE_TIMEOUT_S}s (egress/API stall)")
+    tail = ((r.stdout or "") + (r.stderr or ""))[-800:]
+    if r.returncode != 0:
+        raise SystemExit(f"[smoke] FAIL: claude exited {r.returncode}\n{tail}")
+    if "SMOKE_OK" not in (r.stdout or ""):
+        raise SystemExit(f"[smoke] FAIL: unexpected model output\n{tail}")
+    print("[smoke] OK — CLI + API key + egress verified inside the deployed image", file=sys.stderr)
+
+
 def main() -> None:
+    if os.environ.get("ALPHA_SMOKE", "").strip().lower() in ("1", "true", "yes"):
+        _smoke()
+        return
+
     runner_url = os.environ.get("ALPHA_INTERNAL_RUNNER_URL", "")
     token = os.environ.get("ALPHA_INTERNAL_TOKEN", "")
     model = os.environ.get("ALPHA_MODEL", "claude-sonnet-4-6")

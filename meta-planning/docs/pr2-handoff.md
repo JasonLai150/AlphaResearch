@@ -60,8 +60,9 @@ results/artifacts come *back* over HTTP+GCS. PR2 code + 77 tests are green and d
    Modal's root-owned `/pkg/sitecustomize.py` (non-fatal, Python continues). Fix: in
    `sub_agent()` drop `PYTHONPATH` from the subprocess `env` (`env.pop("PYTHONPATH", None)`)
    — launch.py is stdlib-only and claude is node, so neither needs Modal's `/pkg`.
-3. **`/healthz` returns a Google 404** while every real route works — minor, unexplained;
-   worth a look before demo.
+3. **`/healthz` returned a Google 404** — RESOLVED. Google Front End reserves the exact
+   path `/healthz` on `*.run.app` and 404s it at the edge before it reaches the container.
+   The health route is now `/health` (`orchestrator/api.py`). See `docs/deploy-verification.md`.
 4. **Old job noise**: the Modal dashboard mixes sub-agents from earlier (PR1-era) sessions;
    filter by the *current* session's job ids (from `/sessions/<sid>/full`) when debugging.
 

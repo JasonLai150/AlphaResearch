@@ -130,6 +130,10 @@ async def stream(sid: str, request: Request, last_event_id: str | None = Header(
     return EventSourceResponse(gen())
 
 
-@app.get("/healthz")
-async def healthz() -> dict:
+# NOTE: the path is "/health", NOT "/healthz". Google Front End reserves the exact
+# path "/healthz" on *.run.app and returns its own 404 before the request reaches the
+# container, so a "/healthz" route is silently unreachable from outside Cloud Run
+# (verified: every other path reaches the app; only "/healthz" is intercepted).
+@app.get("/health")
+async def health() -> dict:
     return {"ok": True}
