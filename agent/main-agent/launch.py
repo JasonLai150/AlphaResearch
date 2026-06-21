@@ -102,12 +102,17 @@ def main() -> None:
     # assistant text deltas to the runner. stderr inherits -> Cloud Run logs.
     argv = _build_argv(_prompt(goal), model)
     proc = subprocess.Popen(argv, stdout=subprocess.PIPE, text=True, bufsize=1)
+    relay_exc: Exception | None = None
     try:
         relay(proc.stdout, push, session_id=session_id, job_id=job_id, depth=depth)
+    except Exception as exc:  # noqa: BLE001 — never lose claude's exit code to a relay error
+        relay_exc = exc
     finally:
         if proc.stdout is not None:
             proc.stdout.close()
         rc = proc.wait()
+    if relay_exc is not None:
+        print(f"[launch] relay error: {relay_exc!r}", file=sys.stderr)
     sys.exit(rc)
 
 
