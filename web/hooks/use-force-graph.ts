@@ -46,7 +46,8 @@ export function useForceGraph(
   const nodesRef = useRef<SimNode[]>([]);
   const [nodes, setNodes] = useState<SimNode[]>([]);
 
-  // Create the simulation once.
+  // Create the simulation once. `size` is read only for the initial center;
+  // later size changes are handled by the resize-sync effect below.
   useEffect(() => {
     const sim = forceSimulation<SimNode>([])
       .force("charge", forceManyBody().strength(-340))
@@ -75,7 +76,9 @@ export function useForceGraph(
     sim.force("center", forceCenter(size.width / 2, size.height / 2));
   }, [size.width, size.height]);
 
-  // Reconcile on data change and reheat so the layout re-settles.
+  // `size` is read to seed new nodes near center but is intentionally omitted
+  // from deps: re-reconciling every node on each resize would fight the running
+  // layout. The center force is kept in sync by the resize-sync effect instead.
   useEffect(() => {
     const sim = simRef.current;
     if (!sim) return;

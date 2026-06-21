@@ -26,4 +26,12 @@ describe("reconcileNodes", () => {
     const out = reconcileNodes(prev, [gn("a")], { x: 0, y: 0 });
     expect(out.map((n) => n.id)).toEqual(["a"]);
   });
+
+  it("preserves pin state (fx/fy) of existing nodes across a data refresh", () => {
+    const prev: SimNode[] = [{ ...gn("p"), x: 10, y: 20, fx: 10, fy: 20 }];
+    const out = reconcileNodes(prev, [gn("p", { status: "done" })], { x: 0, y: 0 });
+    expect(out[0].fx).toBe(10);
+    expect(out[0].fy).toBe(20);
+    expect(out[0].status).toBe("done"); // data still refreshed
+  });
 });
