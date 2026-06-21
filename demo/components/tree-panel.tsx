@@ -1,4 +1,4 @@
-import { FileDown } from "lucide-react";
+import { FileDown, LineChart } from "lucide-react";
 
 import { AgentTree } from "@/components/agent-tree";
 import { Eyebrow } from "@/components/eyebrow";
@@ -13,19 +13,38 @@ export function TreePanel({
   subagents,
   artifacts,
   onExpand,
+  onMetrics,
+  sessionId,
 }: {
   tree: TreeNode | null;
   subagents: Subagent[];
   artifacts: WireArtifact[];
   onExpand?: () => void;
+  /** Opens the in-chat long-term metrics overlay. */
+  onMetrics?: () => void;
+  /** When set, sub-agent cards link into /view for this session. */
+  sessionId?: string | null;
 }) {
   return (
     <aside className="flex h-full min-h-0 w-full flex-col border-l border-hairline bg-canvas">
       <div className="flex items-center justify-between border-b border-hairline px-4 py-3">
         <Eyebrow as="h2">Tree</Eyebrow>
-        <span className="text-[11px] text-mute">
-          {subagents.length} subagent{subagents.length === 1 ? "" : "s"}
-        </span>
+        <div className="flex items-center gap-2">
+          {onMetrics && subagents.length > 0 && (
+            <button
+              type="button"
+              onClick={onMetrics}
+              aria-label="View long-term metrics"
+              className="flex items-center gap-1.5 rounded-full border border-hairline px-2.5 py-1 text-[11px] text-body transition-colors hover:border-canvas-mid hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <LineChart className="size-3 text-sunset" aria-hidden />
+              Metrics
+            </button>
+          )}
+          <span className="text-[11px] text-mute">
+            {subagents.length} subagent{subagents.length === 1 ? "" : "s"}
+          </span>
+        </div>
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
@@ -54,7 +73,7 @@ export function TreePanel({
             {subagents.length ? (
               <div className="flex flex-col gap-2">
                 {subagents.map((a) => (
-                  <SubagentCard key={a.id} agent={a} />
+                  <SubagentCard key={a.id} agent={a} sessionId={sessionId} />
                 ))}
               </div>
             ) : (

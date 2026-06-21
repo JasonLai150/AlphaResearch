@@ -12,6 +12,7 @@ import { ContextBar } from "@/components/context-bar";
 import { Eyebrow } from "@/components/eyebrow";
 import { ResizeHandle } from "@/components/resize-handle";
 import { SessionHeader } from "@/components/session-header";
+import { SessionMetrics } from "@/components/session-metrics";
 import { TreePanel } from "@/components/tree-panel";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
@@ -35,6 +36,7 @@ export default function Page() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [treeOpen, setTreeOpen] = useState(false);
   const [graphOpen, setGraphOpen] = useState(false);
+  const [metricsOpen, setMetricsOpen] = useState(false);
 
   const {
     width: sidebarWidth,
@@ -50,6 +52,7 @@ export default function Page() {
     setSidebarOpen(false);
     setTreeOpen(false);
     setGraphOpen(false);
+    setMetricsOpen(false);
     const url = new URL(window.location.href);
     if (id) url.searchParams.set("s", id);
     else url.searchParams.delete("s");
@@ -139,6 +142,8 @@ export default function Page() {
       subagents={subagents}
       artifacts={artifacts}
       onExpand={() => setGraphOpen(true)}
+      onMetrics={() => setMetricsOpen(true)}
+      sessionId={activeId}
     />
   );
 
@@ -253,6 +258,9 @@ export default function Page() {
       </div>
       {graphOpen && (
         <AgentGraph graph={graph} goal={state.goal} onClose={() => setGraphOpen(false)} />
+      )}
+      {metricsOpen && activeId && (
+        <SessionMetrics sessionId={activeId} onClose={() => setMetricsOpen(false)} />
       )}
     </TooltipProvider>
   );
