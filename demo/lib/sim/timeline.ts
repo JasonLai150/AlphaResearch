@@ -1,7 +1,7 @@
 import { rewardPlotUri } from "@/lib/sim/artifacts";
 import { leadFinal, leadProgress, planningTool, strategySummary } from "@/lib/sim/narrative";
 import { mulberry32 } from "@/lib/sim/rng";
-import type { Scenario, StrategySpec, TimedEvent } from "@/lib/sim/types";
+import type { Scenario, TimedEvent } from "@/lib/sim/types";
 
 /*
   Composes a Scenario into the ordered, time-stamped EventEnvelope sequence for a

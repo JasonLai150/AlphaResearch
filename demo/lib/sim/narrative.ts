@@ -73,7 +73,7 @@ const THINK_TEMPLATES = [
 ];
 
 /** Per-researcher work-log lines (for the /view inspector's live work log). */
-export function workLog(scn: Scenario, spec: StrategySpec, rng: Rng): string[] {
+export function workLog(scn: Scenario, spec: StrategySpec, _rng: Rng): string[] {
   return THINK_TEMPLATES.map((t) =>
     t(spec).replace("{seeds}", String(spec.seeds)).replace("{metric}", scn.metricName)
   ).concat(

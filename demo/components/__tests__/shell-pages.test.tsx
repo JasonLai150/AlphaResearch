@@ -115,10 +115,10 @@ describe("Settings page", () => {
 });
 
 describe("Account page", () => {
-  it("renders the keyless profile card (not the Clerk profile)", () => {
+  it("renders the demo profile card (no Clerk profile)", () => {
     render(<AccountPage />);
     expect(screen.getByText("Demo User")).toBeInTheDocument();
-    expect(screen.getByText(/keyless dev mode/i)).toBeInTheDocument();
+    expect(screen.getByText(/interactive demo/i)).toBeInTheDocument();
     expect(screen.queryByTestId("clerk-user-profile")).not.toBeInTheDocument();
   });
 });

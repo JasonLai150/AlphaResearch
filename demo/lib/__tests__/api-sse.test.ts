@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, artifactUrl, streamSession } from "@/lib/api";
 import type { EventEnvelope } from "@/lib/types";
 
-// API_BASE in tests resolves to the default (no NEXT_PUBLIC_API_URL set).
-const API_BASE = "http://localhost:8080";
+// API_BASE in tests resolves to the demo default (no NEXT_PUBLIC_API_URL set).
+const API_BASE = "/api/mock";
 
 /** Build a Response whose body streams the given byte chunks, then closes. */
 function streamResponse(chunks: Uint8Array[], status = 200): Response {
