@@ -55,7 +55,7 @@ secret = modal.Secret.from_name("alpha-secrets")  # REDIS_URL, ANTHROPIC_API_KEY
 app = modal.App(APP_NAME)
 
 
-@app.function(image=image, timeout=3600, secrets=[secret])
+@app.function(image=image, timeout=3600, secrets=[secret], cpu=2.0, memory=2048)
 async def run_job(job_id: str) -> None:
     """Entrypoint inside a Modal sandbox: run a prebaked experiment job."""
     from infra import store
@@ -85,7 +85,24 @@ async def spawn_job(job_id: str) -> str:
     return call.object_id
 
 
-@app.function(image=sub_image, timeout=3600 * 2, secrets=[secret])
+# Resourcing (perf levers):
+#  - cpu=8 / memory=8Gi: GUARANTEED cores so envpool can vectorize many envs (its whole
+#    point) and PPO rollout buffers have headroom — without this Modal gives unguaranteed
+#    burst CPU and env simulation can't parallelize (the dominant time sink). (Lever 1)
+#  - scaledown_window=300: keep a finished container warm 5 min so a fan-out burst /
+#    iterative re-dispatch reuses it instead of cold-starting each time; scales to 0 after
+#    (no idle cost between sessions). Bump min_containers>0 for a standing warm pool. (Lever 2)
+#  - enable_memory_snapshot: restore container init from a snapshot instead of re-running
+#    it on every cold start. Validate on first deploy. (Lever 2)
+@app.function(
+    image=sub_image,
+    timeout=3600 * 2,
+    secrets=[secret],
+    cpu=8.0,
+    memory=8192,
+    scaledown_window=300,
+    enable_memory_snapshot=True,
+)
 def sub_agent(
     job_id: str,
     session_id: str,

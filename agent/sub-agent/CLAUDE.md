@@ -51,6 +51,18 @@ Your Bash sessions have a real RL stack baked in:
   `ppo_atari_envpool.py` for the envpool wiring) and adapt it. Read its README.
 - gymnasium, minigrid, numpy, matplotlib, tensorboard.
 
+### Speed: use envpool with many parallel envs (this is CPU-bound)
+
+You run on CPU with **guaranteed multiple cores**, so simulation throughput — and thus
+your whole run's wall-clock — depends on stepping **many envs in parallel**. Two rules:
+
+- **Always use envpool, never gym `SyncVectorEnv`** (the bare `ppo.py` uses
+  `SyncVectorEnv`, which steps envs one-at-a-time in Python and wastes the cores). Wire
+  envpool like `ppo_atari_envpool.py` does.
+- **Set `num_envs` from the environment**, not the reference's tiny default (4–8):
+  `num_envs = int(os.environ.get("ALPHA_NUM_ENVS", "64"))`. More parallel envs ≈ more
+  steps/sec until the cores saturate. Keep the policy net small (CPU learner).
+
 ## What stays the same (consistency contract — FROZEN)
 
 You may NOT modify, override, or work around:

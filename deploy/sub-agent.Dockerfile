@@ -57,6 +57,18 @@ ENV PYTHONUNBUFFERED=1 \
 # ALPHA_MODEL if a sub-agent needs a stronger model.)
 ENV ALPHA_MODEL=claude-haiku-4-5-20251001
 
+# CPU-PPO tuning (perf levers 3 + 4), sized to the Modal cpu=8 budget:
+#  - OMP/MKL/OPENBLAS thread caps: keep the torch learner from oversubscribing BLAS and
+#    contending with envpool's env-stepping threads (small MiniGrid nets need few learner
+#    threads; the cores are better spent stepping envs). (Lever 3)
+#  - ALPHA_NUM_ENVS: default a high parallel-env count so envpool actually vectorizes —
+#    sim throughput scales with parallel envs until cores saturate. The agent reads this
+#    (CLAUDE.md) for `envpool.make(..., num_envs=$ALPHA_NUM_ENVS)`. (Lever 4)
+ENV OMP_NUM_THREADS=4 \
+    MKL_NUM_THREADS=4 \
+    OPENBLAS_NUM_THREADS=4 \
+    ALPHA_NUM_ENVS=64
+
 # System: Node + EnvPool runtime libs + TLS roots. libgomp1 + libstdc++6 cover
 # the MiniGrid binding; the wheel ships its own gfootball/procgen libs so we
 # don't need SDL2/Qt/GLEW for the MiniGrid path.
@@ -68,7 +80,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get purge -y --auto-remove curl gnupg \
     && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g @anthropic-ai/claude-code@latest
+# Pinned to the claude-code `stable` channel (not @latest) for reproducible image
+# builds — bump this deliberately. (`npm view @anthropic-ai/claude-code dist-tags`)
+RUN npm install -g @anthropic-ai/claude-code@2.1.176
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 

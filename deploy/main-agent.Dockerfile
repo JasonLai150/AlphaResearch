@@ -47,7 +47,7 @@ RUN apt-get -o Acquire::Retries=8 update \
 # pin once we have a known-good version (see the bundled-CLI version in
 # claude-agent-sdk for a reference: 2.1.x at the time of writing).
 RUN npm install -g --fetch-retries=8 --fetch-retry-mintimeout=20000 \
-        @anthropic-ai/claude-code@latest
+        @anthropic-ai/claude-code@2.1.176
 
 # Single Python dep: pydantic. The dispatch script and PreToolUse hook both
 # import scripts/schemas.py which uses pydantic — that's it.
