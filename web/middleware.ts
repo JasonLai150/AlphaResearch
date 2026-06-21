@@ -3,7 +3,8 @@ import { NextResponse } from "next/server";
 
 // Auth is gated on the server secret; keyless dev = pass-through middleware.
 const enabled = !!process.env.CLERK_SECRET_KEY;
-const isPublic = createRouteMatcher(["/sign-in(.*)", "/sign-up(.*)"]);
+// "/" is the public marketing landing; everything else (e.g. /app) stays gated.
+const isPublic = createRouteMatcher(["/", "/sign-in(.*)", "/sign-up(.*)"]);
 
 export default enabled
   ? clerkMiddleware(async (auth, req) => {

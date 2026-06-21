@@ -161,6 +161,64 @@ async def test_reconcile_parent_terminal_cancels_children(fake_redis):
     cancel.assert_awaited_once_with("sb_c")
 
 
+# ---- depth-0 synthesis barrier (idea 3) + orphan-on-done (idea 4) ------
+
+async def _seed_root_with_child(child_status=JobStatus.running):
+    await _seed_session()
+    await store.create_job(Job(id="j_root", session_id="s_a", depth=0, kind=JobKind.agent,
+                               status=JobStatus.running, sandbox_id="exec_1",
+                               backend="cloud_run_job"))
+    await store.create_job(Job(id="j_c", session_id="s_a", parent_job_id="j_root", depth=1,
+                               status=child_status, sandbox_id="sb_c", backend="modal"))
+
+
+async def test_depth0_done_defers_while_child_running(fake_redis):
+    """Idea 3: a depth-0 agent that finished `done` while a sub-agent is still training
+    must NOT finalize yet — it stays `running` so the slow child can land + be recorded."""
+    await _seed_root_with_child(child_status=JobStatus.running)
+    cancel = AsyncMock()
+    with patch("runner.loops.cancel_modal_call", cancel):
+        await loops._finalize_done(await store.get_job("j_root"))
+    assert (await store.get_job("j_root")).status == JobStatus.running  # held open
+    assert (await store.get_job("j_c")).status == JobStatus.running     # not reaped
+    cancel.assert_not_awaited()
+
+
+async def test_depth0_done_finalizes_when_children_terminal(fake_redis):
+    """Once every child is terminal, the depth-0 job finalizes immediately (no straggler
+    to cancel)."""
+    await _seed_root_with_child(child_status=JobStatus.done)
+    cancel = AsyncMock()
+    with patch("runner.loops.cancel_modal_call", cancel):
+        await loops._finalize_done(await store.get_job("j_root"))
+    assert (await store.get_job("j_root")).status == JobStatus.done
+    cancel.assert_not_awaited()
+
+
+async def test_depth0_done_reaps_straggler_after_grace(fake_redis, monkeypatch):
+    """Idea 4: past the barrier grace cap, a still-running child is a wedged orphan —
+    finalize the depth-0 job and cancel the straggler (the gap that used to let oneshot
+    children run to Modal's 2h cap)."""
+    monkeypatch.setattr(loops, "DEPTH0_BARRIER_GRACE_SECONDS", 0)
+    await _seed_root_with_child(child_status=JobStatus.running)
+    cancel = AsyncMock()
+    with patch("runner.loops.cancel_modal_call", cancel):
+        await loops._finalize_done(await store.get_job("j_root"))
+    assert (await store.get_job("j_root")).status == JobStatus.done
+    assert (await store.get_job("j_c")).status == JobStatus.cancelled
+    cancel.assert_awaited_once_with("sb_c")
+
+
+async def test_depth0_done_no_children_finalizes(fake_redis):
+    """A depth-0 agent with no children (e.g. planning-only) finalizes with no barrier."""
+    await _seed_session()
+    await store.create_job(Job(id="j_root", session_id="s_a", depth=0, kind=JobKind.agent,
+                               status=JobStatus.running, sandbox_id="exec_1",
+                               backend="cloud_run_job"))
+    await loops._finalize_done(await store.get_job("j_root"))
+    assert (await store.get_job("j_root")).status == JobStatus.done
+
+
 # ---- reconcile: SEV-12 re-fetch ----------------------------------------
 
 async def test_reconcile_skips_job_that_transitioned(fake_redis):

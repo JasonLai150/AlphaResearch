@@ -56,19 +56,30 @@ the helper scripts below — not by reading local files.
      same idea twice. Skip it.
    - Exit 1 = filesystem/arg issue; fix the path or the script call.
 
-4. **Wait for RunResults over HTTP** (no shared filesystem). Use the helper
+4. **Wait for RunResults over HTTP — do NOT synthesize early** (no shared
+   filesystem). A sub-agent training `budget_steps` on a CPU learner can take many
+   minutes to tens of minutes; if you synthesize before it lands, its result is
+   silently excluded and the round is wasted. So you MUST block on
+   `wait_for_children` (exit 0 = all terminal) before step 5. Use the helper
    scripts, which query the runner's internal API:
 
    ```bash
    python3 scripts/check_children.py                  # <jid> <status> <summary> per child
-   python3 scripts/wait_for_children.py j_a j_b        # block until those are terminal
+   # Block until ALL children are terminal. Derive the timeout from the plan's
+   # wall-clock budget so you wait long enough for the slowest run:
+   TIMEOUT=$(python3 -c "import json,sys; sys.path.insert(0,'scripts'); \
+     from schemas import ResearchPlan; \
+     print(ResearchPlan.model_validate(json.load(open('./.dispatched/plan.json'))).wait_timeout_seconds())")
+   python3 scripts/wait_for_children.py j_a j_b --timeout "$TIMEOUT"
    python3 scripts/read_artifacts.py j_a               # a child's artifact refs (gs:// urls)
    ```
 
    Each child's status is `running | done | failed`; `done` rows carry the
-   sub-agent's summary. Don't poll faster than ~5s.
+   sub-agent's summary. Don't poll faster than ~5s. If `wait_for_children` times
+   out (exit 2) it prints the still-pending ids — note them as incomplete in your
+   synthesis rather than pretending they finished.
 
-5. **Synthesize.** Once children are terminal, rank by `plan.target_metric`.
+5. **Synthesize.** Only after `wait_for_children` returns 0, rank by `plan.target_metric`.
    Write a 10-30 line synthesis covering:
    - Which ideas moved the metric, by how much, vs the baseline encoded in
      `plan.base_hparams`.

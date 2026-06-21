@@ -47,6 +47,13 @@ POLL_INTERVAL = 2.0
 RECONCILE_INTERVAL = 5.0
 LEADERSHIP_INTERVAL = 5.0
 CLEANUP_GRACE_SECONDS = 60.0  # wait this long after a session goes terminal before reclaiming
+# Idea 3 (synthesis barrier): a depth-0 main agent can exit `done` while its sub-agents
+# are still training (their wall-clock >> the agent's synthesis turn). We hold the depth-0
+# job in `running` until its children are terminal, so late results (e.g. a slow ICM run)
+# land + get recorded instead of being cancelled mid-flight. This is the backstop cap on
+# that hold — a child can't outlive the Modal sub-agent timeout (2h), so once we pass it a
+# still-"running" child is wedged and we finalize + reap anyway.
+DEPTH0_BARRIER_GRACE_SECONDS = 3600.0 * 2 + 300.0
 
 _TERMINAL = {JobStatus.done, JobStatus.failed, JobStatus.cancelled}
 _SPAWNABLE = {JobStatus.pending, JobStatus.queued}
@@ -214,9 +221,19 @@ async def _finalize_done(job) -> None:
         return
 
     # depth 0 (main agent): no structured result to read.
+    # Synthesis barrier (idea 3): don't finalize — and so don't cancel orphans (idea 4) —
+    # while sub-agents are still running, within a grace cap. The main agent's process is
+    # already gone; holding its job status `running` simply keeps the session open so late
+    # children finish and are recorded instead of being reaped half-trained.
+    if not await _children_settled(job):
+        return  # leave running; reconcile revisits next pass
+
     await store.write_run(RunResult(job_id=jid, status="done", summary=""))
     await store.set_job_status(jid, JobStatus.done)
     await _emit(sid, jid, 0, EventType.summary, {"summary": "", "metrics": {}})
+    # Idea 4: now that depth-0 is terminal, reap any straggler child that outlived the
+    # grace cap (oneshot main agent exiting `done` left them uncancelled before).
+    await _cancel_orphans_if_terminal(job)
     await _advance_loop(job)  # autonomous sessions: maybe spawn the next round
 
 
@@ -280,6 +297,24 @@ async def _finalize_failed(job, reason: str = "sandbox died") -> None:
     # The round is counted (backstop) and the policy retries or stops on max_rounds.
     if job.depth == 0:
         await _advance_loop(job)
+
+
+async def _children_settled(job) -> bool:
+    """True when every child of a depth-0 job is terminal — OR the barrier grace cap has
+    elapsed since the parent first finished (backstop against a child wedged in `running`,
+    which the Modal timeout makes impossible to exceed in reality). While it returns False
+    the depth-0 job stays `running` and reconcile revisits it, giving slow sub-agents time
+    to land before synthesis/cleanup treats the round as closed."""
+    children = [await store.get_job(cjid) for cjid in await store.get_children(job.id)]
+    pending = [c for c in children if c is not None and c.status not in _TERMINAL]
+    if not pending:
+        return True
+    r = store.get_redis()
+    key = f"job:{job.id}:done_since"
+    now = time.time()
+    await r.set(key, now, nx=True, ex=7 * 24 * 3600)  # stamp first-finished once
+    first = await r.get(key)
+    return first is not None and (now - float(first)) >= DEPTH0_BARRIER_GRACE_SECONDS
 
 
 async def _cancel_orphans_if_terminal(job) -> None:

@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
   ChevronsUpDown,
   FolderClosed,
@@ -21,27 +23,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Eyebrow } from "@/components/eyebrow";
-import { cn } from "@/lib/utils";
+import { cn, relativeTime } from "@/lib/utils";
 import type { WireSession } from "@/lib/types";
 
 const NAV = [
-  { key: "overview", label: "Overview", icon: LayoutGrid },
-  { key: "integrations", label: "Integrations", icon: Plug },
-  { key: "projects", label: "Projects", icon: FolderClosed },
+  { href: "/overview", label: "Overview", icon: LayoutGrid },
+  { href: "/integrations", label: "Integrations", icon: Plug },
+  { href: "/projects", label: "Projects", icon: FolderClosed },
 ] as const;
 
 const focusRing =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
-
-function relTime(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  const m = Math.floor(ms / 60000);
-  if (Number.isNaN(m) || m < 1) return "now";
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
-  return `${Math.floor(h / 24)}d`;
-}
 
 function SidebarSkeletonRow() {
   return (
@@ -66,8 +58,13 @@ export function AppSidebar({
   loading?: boolean;
 }) {
   const { user, clerk } = useAppAuth();
-  const [activeNav, setActiveNav] = useState<string>("overview");
+  const pathname = usePathname();
   const [filter, setFilter] = useState("");
+
+  // Top-level destinations are real routes now; the active item is whichever
+  // matches the current path. The console ("/") is the Chats view below, so on
+  // "/" none of the section links are active — that's intended.
+  const isActive = (href: string) => pathname === href;
 
   const shown = sessions.filter((s) =>
     (s.goal || "").toLowerCase().includes(filter.trim().toLowerCase())
@@ -75,29 +72,35 @@ export function AppSidebar({
 
   return (
     <aside className="flex h-full min-h-0 w-full flex-col gap-5 border-r border-hairline bg-canvas px-3 py-4">
-      <div className="flex items-center gap-2 px-2">
+      <Link
+        href="/"
+        className={cn(
+          "flex items-center gap-2 rounded-lg px-2 py-1 transition-colors hover:bg-canvas-soft",
+          focusRing
+        )}
+        aria-label="Alpha Research home"
+      >
         <Sparkles className="size-4 text-sunset" aria-hidden />
         <span className="text-[15px] tracking-[-0.01em]">Alpha Research</span>
-      </div>
+      </Link>
 
       <nav className="flex flex-col gap-0.5">
-        {NAV.map(({ key, label, icon: Icon }) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setActiveNav(key)}
-            aria-current={activeNav === key ? "page" : undefined}
+        {NAV.map(({ href, label, icon: Icon }) => (
+          <Link
+            key={href}
+            href={href}
+            aria-current={isActive(href) ? "page" : undefined}
             className={cn(
               "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
               focusRing,
-              activeNav === key
+              isActive(href)
                 ? "bg-canvas-soft text-ink"
                 : "text-body hover:bg-canvas-soft hover:text-ink"
             )}
           >
             <Icon className="size-4" aria-hidden />
             {label}
-          </button>
+          </Link>
         ))}
       </nav>
 
@@ -149,7 +152,7 @@ export function AppSidebar({
                   {s.goal || "Untitled session"}
                 </span>
                 <span className="shrink-0 text-[11px] text-mute">
-                  {relTime(s.created_at)}
+                  {relativeTime(s.created_at)}
                 </span>
               </button>
             ))}
@@ -172,16 +175,20 @@ export function AppSidebar({
       </div>
 
       <div className="flex flex-col gap-1 border-t border-hairline pt-3">
-        <button
-          type="button"
+        <Link
+          href="/settings"
+          aria-current={isActive("/settings") ? "page" : undefined}
           className={cn(
-            "flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-body transition-colors hover:bg-canvas-soft hover:text-ink",
-            focusRing
+            "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+            focusRing,
+            isActive("/settings")
+              ? "bg-canvas-soft text-ink"
+              : "text-body hover:bg-canvas-soft hover:text-ink"
           )}
         >
           <Settings className="size-4" aria-hidden />
           Settings
-        </button>
+        </Link>
         {clerk ? (
           <div className="flex items-center gap-2.5 rounded-lg px-2 py-1.5">
             {/*
@@ -192,7 +199,15 @@ export function AppSidebar({
               (owned by another agent).
             */}
             <UserButton />
-            <div className="flex min-w-0 flex-col items-start gap-0.5 leading-tight">
+            <Link
+              href="/account"
+              aria-current={isActive("/account") ? "page" : undefined}
+              className={cn(
+                "flex min-w-0 flex-1 flex-col items-start gap-0.5 rounded-lg px-2 py-1 leading-tight transition-colors hover:bg-canvas-soft",
+                focusRing,
+                isActive("/account") && "bg-canvas-soft"
+              )}
+            >
               <span className="line-clamp-1 max-w-[120px] text-[13px]">
                 {user.handle}
               </span>
@@ -202,14 +217,16 @@ export function AppSidebar({
               >
                 {user.role}
               </Badge>
-            </div>
+            </Link>
           </div>
         ) : (
-          <button
-            type="button"
+          <Link
+            href="/account"
+            aria-current={isActive("/account") ? "page" : undefined}
             className={cn(
               "flex items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-canvas-soft",
-              focusRing
+              focusRing,
+              isActive("/account") && "bg-canvas-soft"
             )}
           >
             <Avatar className="size-7">
@@ -229,7 +246,7 @@ export function AppSidebar({
               </Badge>
             </div>
             <ChevronsUpDown className="ml-auto size-4 text-mute" aria-hidden />
-          </button>
+          </Link>
         )}
       </div>
     </aside>

@@ -117,3 +117,49 @@
     .ar-node-pulse, .ar-caret, .ar-edge-flow { animation: none; }
   }
 }
+
+/*
+  Landing page motion — foreground content rises in on load; accent glows drift
+  slowly. Pure CSS so it runs without JS; fully disabled under reduced-motion.
+*/
+@keyframes landing-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+    filter: blur(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+@keyframes landing-drift {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(4%, -3%, 0) scale(1.12);
+  }
+}
+.landing-rise {
+  animation: landing-rise 0.9s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+.landing-drift-a {
+  animation: landing-drift 26s ease-in-out infinite alternate;
+}
+.landing-drift-b {
+  animation: landing-drift 32s ease-in-out infinite alternate-reverse;
+}
+@media (prefers-reduced-motion: reduce) {
+  .landing-rise {
+    animation: none;
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+  .landing-drift-a,
+  .landing-drift-b {
+    animation: none;
+  }
+}
