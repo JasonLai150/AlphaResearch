@@ -188,6 +188,55 @@ async def _consume_dispatches_once() -> None:
             await r.xdel(store.DISPATCH_QUEUE, entry_id)  # SEV-1
 
 
+# ---- chat_loop: re-spawn the lead agent for a user follow-up turn ------
+#
+# Multi-turn chat is REAL (not the local-sim stub): a follow-up re-runs the lead
+# agent, reusing the root job so the reply streams into the main transcript rather
+# than creating a stray tree node. The message is staged via store.set_pending_chat
+# and handed to that turn by GET /internal/bootstrap. We process one turn at a time
+# (FIFO): while the lead is mid-run/turn, leave queued messages for the next pass.
+
+_CHAT_BUSY = {JobStatus.running, JobStatus.queued, JobStatus.pending}
+
+
+async def _consume_chats_once() -> None:
+    r = store.get_redis()
+    for entry_id, fields in await store.read_stream(store.CHAT_INBOX, "0", 50, 0):
+        sid = fields.get("session_id")
+        content = (fields.get("content") or "").strip()
+        root_id = await _root_job_id(sid) if sid else None
+        if not root_id or not content:
+            await r.xdel(store.CHAT_INBOX, entry_id)  # nothing to answer; drop
+            continue
+        job = await store.get_job(root_id)
+        if job is None:
+            await r.xdel(store.CHAT_INBOX, entry_id)
+            continue
+        if job.status in _CHAT_BUSY:
+            break  # lead is mid-turn; leave this (and the rest) queued, FIFO
+        with sentry_sdk.start_transaction(
+            op="alpha.runner.chat_turn", name="chat_turn"
+        ) as txn:
+            tag_alpha(txn, session_id=sid, job_id=root_id, depth=0, backend="cloud_run_job")
+            await store.set_pending_chat(sid, content)  # bootstrap pops this for the turn
+            traceparent = sentry_sdk.get_traceparent() or ""
+            baggage = sentry_sdk.get_baggage() or ""
+            try:
+                sandbox_id = await spawn_main_agent_job(
+                    sid, root_id, traceparent=traceparent, baggage=baggage)
+            except Exception as e:  # noqa: BLE001
+                txn.set_status("internal_error")
+                sentry_sdk.capture_exception(e)
+                print(f"[chat_loop] spawn failed for {sid}: {e!r}")
+                await store.pop_pending_chat(sid)  # don't strand an unsent message
+                break  # back off; retry this entry next pass
+            txn.set_tag("alpha.sandbox_id", sandbox_id)
+            await store.mark_job_running(root_id, sandbox_id, "cloud_run_job")
+            await _emit(sid, root_id, 0, EventType.status,
+                        {"status": "running", "sandbox": sandbox_id})
+            await r.xdel(store.CHAT_INBOX, entry_id)
+
+
 # ---- reconcile_loop ----------------------------------------------------
 
 async def _poll(job) -> str:
@@ -425,6 +474,16 @@ async def dispatch_loop() -> None:
                 await _consume_dispatches_once()
         except Exception as e:  # noqa: BLE001
             print(f"[dispatch_loop] {e!r}")
+        await asyncio.sleep(POLL_INTERVAL)
+
+
+async def chat_loop() -> None:
+    while True:
+        try:
+            if _leader.is_leader:
+                await _consume_chats_once()
+        except Exception as e:  # noqa: BLE001
+            print(f"[chat_loop] {e!r}")
         await asyncio.sleep(POLL_INTERVAL)
 
 

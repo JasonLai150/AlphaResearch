@@ -521,6 +521,34 @@ async def enqueue_chat(session_id: str, content: str) -> str:
     )
 
 
+# The pending chat message for a session's next agent turn. The chat_loop sets it
+# right before re-spawning the lead agent; /internal/bootstrap pops it so that turn
+# answers it (and a bootstrap retry can't re-answer). TTL guards against a spawn
+# that never boots leaving a stale message behind.
+_PENDING_CHAT_TTL = 6 * 3600
+
+
+def _pending_chat_key(sid: str) -> str:
+    return f"session:{sid}:pending_chat"
+
+
+async def set_pending_chat(session_id: str, content: str) -> None:
+    await get_redis().set(_pending_chat_key(session_id), content, ex=_PENDING_CHAT_TTL)
+
+
+async def get_pending_chat(session_id: str) -> str | None:
+    return await get_redis().get(_pending_chat_key(session_id))
+
+
+async def pop_pending_chat(session_id: str) -> str | None:
+    r = get_redis()
+    async with r.pipeline(transaction=True) as p:
+        p.get(_pending_chat_key(session_id))
+        p.delete(_pending_chat_key(session_id))
+        content, _ = await p.execute()
+    return content
+
+
 # ---- generic stream read / ack -----------------------------------------
 
 async def read_stream(

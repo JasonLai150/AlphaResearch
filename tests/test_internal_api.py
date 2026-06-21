@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from infra import store
-from infra.schemas import Job, JobKind, JobStatus, RunResult
+from infra.schemas import Job, JobKind, JobStatus, Message, RunResult
 from runner.internal_api import router
 
 pytestmark = pytest.mark.asyncio
@@ -108,6 +108,28 @@ async def test_bootstrap_returns_goal_and_mode(client, fake_redis):
     assert body["mode"] == "oneshot"
     assert body["root_job_id"] == "j_root"
     assert body["depth"] == 0
+
+
+async def test_bootstrap_returns_chat_turn_with_message_and_transcript(client, fake_redis):
+    await store.create_session("s_a", "u_1", "improve DoorKey", 100)
+    await fake_redis.json().set(store._session_key("s_a"), "$.root_job_id", "j_root")
+    await store.append_message(Message(session_id="s_a", job_id="j_root", role="user", content="start"))
+    await store.append_message(
+        Message(session_id="s_a", job_id="j_root", role="assistant", content="X wins at 0.81"))
+    await store.set_pending_chat("s_a", "why did Y underperform?")
+    tok = await store.mint_agent_token("s_a")
+
+    r = await client.get("/internal/bootstrap", headers=_bearer(tok))
+    assert r.status_code == 200
+    body = r.json()
+    assert body["mode"] == "chat"
+    assert body["message"] == "why did Y underperform?"
+    assert [m["role"] for m in body["conversation"]] == ["user", "assistant"]
+    assert body["conversation"][-1]["content"] == "X wins at 0.81"
+
+    # The message was popped: a re-bootstrap is no longer a chat turn (no re-answer).
+    r2 = await client.get("/internal/bootstrap", headers=_bearer(tok))
+    assert r2.json()["mode"] == "oneshot"
 
 
 async def test_bootstrap_rejects_cross_session_isolation(client, fake_redis):
