@@ -49,6 +49,14 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     DEBIAN_FRONTEND=noninteractive
 
+# Sub-agents run on Haiku 4.5 — the fastest, cheapest tier — since they do many
+# parallel one-shot experiment runs where speed/cost matter more than peak reasoning.
+# launch.py passes this as `claude -p --model $ALPHA_MODEL`.
+# (Note: Claude Code's "/fast mode" is an Opus-4.6+-only interactive feature, so it
+# does not apply to Haiku; Haiku 4.5 IS the fast path here. Override per-run with
+# ALPHA_MODEL if a sub-agent needs a stronger model.)
+ENV ALPHA_MODEL=claude-haiku-4-5-20251001
+
 # System: Node + EnvPool runtime libs + TLS roots. libgomp1 + libstdc++6 cover
 # the MiniGrid binding; the wheel ships its own gfootball/procgen libs so we
 # don't need SDL2/Qt/GLEW for the MiniGrid path.
