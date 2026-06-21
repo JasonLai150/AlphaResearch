@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AlphaResearch Backend MVP — features & user-flow test plan</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --ink:#13151a; --muted:#5b6472; --line:#e2e6ec; --card:#ffffff;
+    --accent:#3b5bdb; --green:#0f9d58; --greenbg:#e6f4ea; --amber:#b8860b; --amberbg:#fbf3dc;
+    --gray:#8a93a2; --graybg:#eef1f5; --code:#0b1020;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.5;font-size:15px}
+  .wrap{max-width:960px;margin:0 auto;padding:0 20px 80px}
+  header{background:linear-gradient(135deg,#1b2333,#2a3550);color:#fff;padding:34px 0 30px;margin-bottom:8px}
+  header .wrap{padding-bottom:0}
+  h1{margin:0 0 6px;font-size:26px;letter-spacing:-.3px}
+  .sub{color:#c2cadb;font-size:14px;margin:0}
+  .pill{display:inline-block;font-size:12px;font-weight:600;padding:2px 9px;border-radius:999px;vertical-align:middle}
+  .pill.done{background:var(--greenbg);color:var(--green)}
+  .pill.flight{background:var(--amberbg);color:var(--amber)}
+  .pill.todo{background:var(--graybg);color:var(--gray)}
+  .pill.dark{background:rgba(255,255,255,.14);color:#dfe6f5}
+  h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);
+    margin:38px 0 14px;border-bottom:1px solid var(--line);padding-bottom:7px}
+  .lead{font-size:16px;color:#2c3340;margin:18px 0 0}
+  .grid{display:grid;gap:14px}
+  @media(min-width:680px){.grid.two{grid-template-columns:1fr 1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .card h3{margin:0 0 4px;font-size:15px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .card p{margin:6px 0 0;color:var(--muted);font-size:13.5px}
+  .card ul{margin:8px 0 0;padding-left:18px;color:var(--muted);font-size:13.5px}
+  .card li{margin:3px 0}
+  code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px}
+  code{background:#eceff4;color:#23304d;padding:1px 5px;border-radius:5px}
+  .flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:0;margin:8px 0 2px;
+    background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;overflow-x:auto}
+  .node{min-width:120px;flex:1;text-align:center;padding:10px 8px}
+  .node .t{font-weight:700;font-size:13px}
+  .node .d{font-size:11.5px;color:var(--muted);margin-top:3px}
+  .arrow{display:flex;align-items:center;color:var(--accent);font-weight:700;padding:0 4px}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--card);
+    border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:#f0f2f6;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+  tr:last-child td{border-bottom:none}
+  .stage{border-left:4px solid var(--line);padding:2px 0 2px 16px;margin:0 0 18px}
+  .stage.ok{border-color:var(--green)} .stage.next{border-color:var(--amber)} .stage.block{border-color:#d64545}
+  .stage h3{margin:0 0 2px;font-size:15.5px}
+  .stage .meta{font-size:12px;color:var(--muted);margin-bottom:6px}
+  .stage ul{margin:6px 0 0;padding-left:18px;font-size:13.5px;color:#3a414c}
+  .stage li{margin:4px 0}
+  .note{background:#fff8e8;border:1px solid #f0e0b8;border-radius:10px;padding:13px 16px;font-size:13.5px}
+  .scroll{overflow-x:auto}
+  .foot{color:var(--muted);font-size:12px;margin-top:40px;border-top:1px solid var(--line);padding-top:14px}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <h1>AlphaResearch — Backend MVP</h1>
+    <p class="sub">One <code style="background:rgba(255,255,255,.12);color:#dfe6f5">POST /sessions {user_id, goal}</code> boots a real recursive RL-research run end-to-end &nbsp;·&nbsp;
+    <span class="pill dark">68 tests green</span> <span class="pill dark">ruff clean</span> <span class="pill dark">image builds</span> <span class="pill dark">4 commits · branch docker-GCP-modal</span></p>
+  </div>
+</header>
+<div class="wrap">
+
+  <p class="lead">The backend that turns a research goal into a fanned-out tree of autonomous Claude-Code agents — a <b>main agent</b> (research director) that dispatches one <b>sub agent</b> per idea, with live streaming, full chat resume, and artifacts. Redis is the single source of truth; the runner orchestrates Cloud Run + Modal.</p>
+
+  <h2>End-to-end flow</h2>
+  <div class="flow">
+    <div class="node"><div class="t">Browser / API</div><div class="d">POST /sessions · SSE stream · GET /full</div></div>
+    <div class="arrow">→</div>
+    <div class="node"><div class="t">Orchestrator</div><div class="d">FastAPI + runner loops (Cloud Run service)</div></div>
+    <div class="arrow">→</div>
+    <div class="node"><div class="t">Main agent</div><div class="d">Cloud Run Job · Claude Code · plans + dispatches</div></div>
+    <div class="arrow">→</div>
+    <div class="node"><div class="t">Sub agents</div><div class="d">Modal Fns · 1/idea · run + report</div></div>
+    <div class="arrow">→</div>
+    <div class="node"><div class="t">Results</div><div class="d">Redis state · GCS artifacts · back up the tree</div></div>
+  </div>
+
+  <h2>What we implemented <span class="pill done">all green</span></h2>
+  <div class="grid two">
+    <div class="card">
+      <h3>🌐 Session API <span class="pill done">done</span></h3>
+      <p>Public surface for the chat UI.</p>
+      <ul>
+        <li><code>POST /sessions {user_id, goal}</code> → creates session + root job, enqueues run</li>
+        <li><code>GET /sessions/{id}/full</code> → resume: session + job tree + runs + transcript + artifacts</li>
+        <li><code>GET /sessions/{id}/stream</code> → SSE live event bus</li>
+        <li><code>GET /sessions/{id}</code> snapshot · <code>/healthz</code></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>⚙️ The runner <span class="pill done">done</span></h3>
+      <p>asyncio loops co-hosted with the API; single active leader (Redis lease).</p>
+      <ul>
+        <li><b>session_loop</b> → spawns main agent (Cloud Run Job)</li>
+        <li><b>dispatch_loop</b> → spawns sub agents (Modal)</li>
+        <li><b>reconcile_loop</b> → poll → finalize → ship artifacts → cancel orphans → cleanup</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>🧭 Main agent <span class="pill done">done</span></h3>
+      <p>Research director (Claude Code CLI, Cloud Run Job).</p>
+      <ul>
+        <li>Builds a validated <code>ResearchPlan</code>; one sub-agent per diverse idea</li>
+        <li>Dispatches via <code>POST /internal/dispatch</code> (no shared FS)</li>
+        <li>Polls children + reads artifacts over HTTP; synthesizes findings</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>🔬 Sub agents <span class="pill done">done</span></h3>
+      <p>One isolated experimenter per idea (Claude Code CLI, Modal).</p>
+      <ul>
+        <li>Reads its dispatch record from a per-session volume</li>
+        <li>Runs the experiment; writes <code>result.json</code> <b>atomically</b> + <code>.done</code> sentinel</li>
+        <li>Drops plots/checkpoints into the volume → runner ships to GCS</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>🔌 Internal API + telemetry <span class="pill done">done</span></h3>
+      <p>Agents → runner, per-session token auth.</p>
+      <ul>
+        <li><code>/internal/events</code>, <code>/transcript</code>, <code>/dispatch</code>, <code>/children[/artifacts]</code></li>
+        <li>Hooks stream every tool call + user turn into the chat</li>
+        <li>Routes hidden from OpenAPI</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>🗃️ State, artifacts, deploy <span class="pill done">done</span></h3>
+      <p>Redis = source of truth; GCS = blobs.</p>
+      <ul>
+        <li>Jobs/tree/runs/events/transcript/queues/budgets/guardrails</li>
+        <li>GCS upload w/ deterministic (idempotent) artifact ids</li>
+        <li><code>deploy/api.Dockerfile</code> (builds) + idempotent <code>deploy_cloudrun.sh</code> + Modal app</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>Hardening — 13 SEV-1/SEV-2 fixes + 2 adversarial reviews</h2>
+  <div class="card">
+    <p style="margin-top:0">Per-session ephemeral tokens (no shared-secret blast radius) · runner leader lease (no double-spawn on deploys) · idempotent spawns · atomic results + sentinel · orphan-child cancellation · reconcile re-fetch · deterministic artifact ids · field-level status writes · startup Redis ping. <b>Midpoint review:</b> 14 findings confirmed &amp; fixed. <b>Final review:</b> <span class="pill flight">running now</span>. Full per-fix map in <code>docs/backend-mvp-notes.md</code>.</p>
+  </div>
+
+  <h2>What's tested today — 68 automated tests <span class="pill done">passing</span></h2>
+  <div class="scroll">
+  <table>
+    <tr><th>Layer</th><th>Test file</th><th>Proves</th></tr>
+    <tr><td>Data</td><td class="mono">test_store_additions</td><td>transcript, queues, status index, tokens, lease, deterministic ids</td></tr>
+    <tr><td>Internal API</td><td class="mono">test_internal_api</td><td>auth, cross-session rejection, dispatch depth/parent/fanout validation</td></tr>
+    <tr><td>Agents</td><td class="mono">test_hooks · test_check_children · test_dispatch_subagent</td><td>telemetry push, atomic result write, HTTP child polling, dispatch record</td></tr>
+    <tr><td>Runner</td><td class="mono">test_runner_loops · test_cloud_run_client · test_gcs_uploader</td><td>spawn gating, reconcile, orphan cancel, cleanup, SEV-9 assert, idempotent upload</td></tr>
+    <tr><td>API + flow</td><td class="mono">test_api_full_session · test_e2e_smoke</td><td><b>full orchestration</b> with cloud spawns + GCS mocked</td></tr>
+  </table>
+  </div>
+  <p style="color:var(--muted);font-size:13.5px;margin-top:10px"><b>The gap:</b> these prove the <i>orchestration logic</i> with the cloud + the real Claude agents mocked. They do not yet exercise a <i>real</i> agent thinking, planning, and training. That's the user-flow test below.</p>
+
+  <h2>Testing the whole user flow — staged plan</h2>
+
+  <div class="stage ok">
+    <h3>Stage 0 · Logic e2e, fully mocked <span class="pill done">works today</span></h3>
+    <div class="meta">Command: <code>uv run pytest tests/test_e2e_smoke.py</code></div>
+    <ul>
+      <li>POST /sessions → session_loop spawns main → main POSTs /internal/dispatch → dispatch_loop spawns sub → sub writes result+artifact → reconcile finalizes → GET /full shows the tree. Confirms every seam fits.</li>
+    </ul>
+  </div>
+
+  <div class="stage next">
+    <h3>Stage 1 · Real agents, local, no cloud <span class="pill todo">~1 day to add</span></h3>
+    <div class="meta">Highest ROI: exercises real Claude-Code planning/dispatch/training without GCP/Modal.</div>
+    <ul>
+      <li><b>Implement a <code>local</code> spawn backend</b>: <code>docker run</code> the <code>main-agent</code> / <code>sub-agent</code> images on localhost, mounting a local dir as the per-session "volume", with <code>ALPHA_INTERNAL_RUNNER_URL</code> pointed at the host. Swap it in behind <code>cloud_run_client.spawn_main_agent_job</code> / <code>modal_client.spawn_sub_agent</code> via a config flag.</li>
+      <li>Run <code>uvicorn orchestrator.api:app</code> against real Redis Cloud; <code>curl POST /sessions</code>; tail the SSE stream.</li>
+      <li>Use a <b>toy plan</b> (tiny <code>budget_steps</code>, fast env) so a sub-agent finishes in seconds, not hours.</li>
+      <li>Validates: real plan generation, dispatch hooks, internal-API auth, telemetry streaming, reconcile, synthesis — the actual agent behavior.</li>
+    </ul>
+  </div>
+
+  <div class="stage block">
+    <h3>Stage 2 · Full cloud round-trip <span class="pill todo">needs 1 fix first</span></h3>
+    <div class="meta">Deploy: <code>scripts/deploy_cloudrun.sh</code> + <code>modal deploy infra/modal_app.py</code> (+ create secrets).</div>
+    <ul>
+      <li><b>Blocker:</b> the runner reads sub-agent results from a <i>local</i> volume path, but Cloud Run can't mount a Modal Volume. Fix <code>reload_volume()</code> to hydrate via the Modal SDK, <i>or</i> have sub-agents push results to a new <code>/internal/result</code> endpoint. (Detailed in <code>docs/backend-mvp-notes.md</code>.)</li>
+      <li>Then: real <code>POST /sessions</code> → watch SSE → <code>GET /full</code> until the root job is terminal → inspect synthesis + <code>gs://</code> artifacts.</li>
+    </ul>
+  </div>
+
+  <h2>Concrete things to build to make the flow demoable</h2>
+  <div class="grid two">
+    <div class="card"><h3>1 · Local spawn backend <span class="pill todo">enables Stage 1</span></h3><p>docker-run agents on localhost. Unlocks a real end-to-end run on one machine — the single highest-value next step.</p></div>
+    <div class="card"><h3>2 · <code>scripts/smoke_user_flow.py</code> <span class="pill todo">small</span></h3><p>POST a goal, tail SSE, poll <code>/full</code> until terminal, print the synthesis + artifact URLs. Works against local or cloud.</p></div>
+    <div class="card"><h3>3 · Volume hydration fix <span class="pill todo">unblocks Stage 2</span></h3><p>Modal-SDK read in <code>reload_volume()</code> (or sub-agent result push). Required for any real cloud run.</p></div>
+    <div class="card"><h3>4 · Wire the web shell <span class="pill todo">demo</span></h3><p><code>web/</code> (Next.js) → call POST /sessions and render the SSE event tree. The actual human-facing chat.</p></div>
+  </div>
+
+  <p class="foot">Branch <code>docker-GCP-modal</code> · not pushed · full SEV map &amp; assumptions in <code>docs/backend-mvp-notes.md</code>. Final adversarial review in flight; confirmed findings will be folded in before wrap-up.</p>
+</div>
+</body>
+</html>

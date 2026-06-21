@@ -74,5 +74,52 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ---- Runner internal API (agents -> runner HTTP push) --------------------
+    # Bootstrap/dev fallback only. Production auth is the per-session ephemeral
+    # token (store.mint_agent_token) injected per-execution at spawn — see SEV-4.
+    internal_token: str = Field(
+        default="dev-internal-token",
+        validation_alias=AliasChoices("ALPHA_INTERNAL_TOKEN"),
+    )
+    internal_runner_url: str = Field(
+        default="http://localhost:8080",
+        validation_alias=AliasChoices("ALPHA_INTERNAL_RUNNER_URL"),
+    )
+    # When true, allow the shared internal_token as a fallback bearer on /internal/*.
+    # Keep FALSE in production (per-session tokens only).
+    internal_token_fallback: bool = False
+
+    # ---- Modal (sub-agents) + per-session volume mount root ------------------
+    modal_app_name: str = Field(
+        default="alpharesearch",
+        validation_alias=AliasChoices("ALPHA_MODAL_APP_NAME"),
+    )
+    volume_root: str = Field(
+        default="/mnt/alpha-volumes",
+        validation_alias=AliasChoices("ALPHA_VOLUME_ROOT"),
+    )
+
+    # ---- Cloud Run (main-agent job) ----------------------------------------
+    gcp_project: str = Field(
+        default="alpharesearch-500100",
+        validation_alias=AliasChoices("ALPHA_GCP_PROJECT", "GCP_PROJECT"),
+    )
+    gcp_region: str = Field(
+        default="us-central1",
+        validation_alias=AliasChoices("ALPHA_GCP_REGION", "GCP_REGION"),
+    )
+    main_agent_job_name: str = Field(
+        default="alpha-main-agent",
+        validation_alias=AliasChoices("ALPHA_MAIN_AGENT_JOB_NAME"),
+    )
+
+    # ---- Runner lifecycle ---------------------------------------------------
+    # FastAPI startup launches the runner loops when true. Tests set it false and
+    # drive the loop bodies (_consume_*_once / _reconcile_once) directly.
+    runner_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("ALPHA_RUNNER_ENABLED"),
+    )
+
 
 settings = Settings()

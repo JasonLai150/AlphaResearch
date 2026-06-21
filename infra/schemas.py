@@ -10,7 +10,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
-SCHEMA_VERSION = 1
+# v2: Job gains backend+sandbox_id, drops modal_call_id; adds Message; +queued/+cancelled status
+SCHEMA_VERSION = 2
 
 
 def _now() -> str:
@@ -24,9 +25,11 @@ class JobKind(StrEnum):
 
 class JobStatus(StrEnum):
     pending = "pending"
+    queued = "queued"
     running = "running"
     done = "done"
     failed = "failed"
+    cancelled = "cancelled"
 
 
 class EventType(StrEnum):
@@ -55,8 +58,22 @@ class Job(BaseModel):
     status: JobStatus = JobStatus.pending
     params: dict = Field(default_factory=dict)  # includes goal/strategy/env_id/hparams
     gpu: bool = False
-    modal_call_id: str | None = None
+    backend: str = "modal"        # "modal" | "cloud_run_job" | "local"
+    sandbox_id: str | None = None  # Modal FunctionCall.object_id OR Cloud Run execution name
     created_at: str = Field(default_factory=_now)
+
+
+class Message(BaseModel):
+    """One turn in the chat transcript. Written by the agent log_transcript hook
+    via HTTP POST to /internal/transcript, stored on a per-session Redis Stream."""
+
+    session_id: str
+    job_id: str
+    role: str  # user | assistant | tool_use | tool_result | system
+    content: str = ""
+    tool_name: str | None = None
+    tool_input: dict | None = None
+    ts: str = Field(default_factory=_now)
 
 
 class DispatchPayload(BaseModel):

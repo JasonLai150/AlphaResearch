@@ -32,10 +32,17 @@ calls, defend them, reject ideas that won't move the metric.
    re-validates the plan against the consistency contract and refuses anything
    malformed.
 
-4. **Wait and synthesize.** Poll each sub-agent's RunResult JSON in
-   `./.dispatched/<job_id>.result.json`. Read each one, rank by
-   `plan.target_metric`, write a synthesis: what moved the metric, what didn't,
-   what to try next. Be willing to conclude "no idea worked, here's why."
+4. **Wait and synthesize.** You do NOT share a filesystem with your sub-agents —
+   query their status over the runner's internal API using the helper scripts:
+
+       python3 scripts/check_children.py            # one line per child: <jid> <status> <summary>
+       python3 scripts/wait_for_children.py j_a j_b  # block until those children are terminal
+       python3 scripts/read_artifacts.py j_a         # JSON list of a child's artifacts (gs:// urls)
+
+   Rank by `plan.target_metric`, write a synthesis: what moved the metric, what
+   didn't, what to try next. Be willing to conclude "no idea worked, here's why."
+   Do NOT poll faster than ~5s — the runner reconciles on that cadence, so faster
+   checks return identical state.
 
 ---
 

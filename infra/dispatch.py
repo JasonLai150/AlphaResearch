@@ -128,6 +128,6 @@ async def _launch(job: Job) -> None:
         # so a fast remote job that already reached `done` is never demoted to `running`.
         await store.set_job_status(job.id, "running")
         call_id = await spawn_job(job.id)
-        await store.update_job(job.id, modal_call_id=call_id)
+        await store.update_job(job.id, sandbox_id=call_id, backend="modal")
     else:
         raise DispatchError(f"unknown DISPATCH_BACKEND={backend!r}")
