@@ -63,9 +63,17 @@ _CB_CONFIG="$(mktemp /tmp/alpha-cloudbuild.XXXXXX.yaml)"
 trap 'rm -f "${_CB_CONFIG}"' EXIT
 cat > "${_CB_CONFIG}" <<'YAML'
 steps:
+  # DOCKER_BUILDKIT=1 is REQUIRED: each image relies on its per-Dockerfile ignore
+  # (deploy/<name>.Dockerfile.dockerignore), and only BuildKit honors that file in
+  # preference to the root .dockerignore. The root .dockerignore is tuned for the
+  # minimal agent images (it excludes pyproject.toml/uv.lock/infra/orchestrator), so
+  # without BuildKit the API build's `COPY pyproject.toml uv.lock` fails. main-agent
+  # has no sibling ignore, so BuildKit correctly falls back to the root .dockerignore.
   - name: gcr.io/cloud-builders/docker
+    env: ['DOCKER_BUILDKIT=1']
     args: ['build', '-f', 'deploy/api.Dockerfile', '-t', '${_IMAGE_API}', '.']
   - name: gcr.io/cloud-builders/docker
+    env: ['DOCKER_BUILDKIT=1']
     args: ['build', '-f', 'deploy/main-agent.Dockerfile', '-t', '${_IMAGE_AGENT}', '.']
 images:
   - '${_IMAGE_API}'

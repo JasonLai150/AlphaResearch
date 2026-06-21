@@ -1,0 +1,60 @@
+# Build context for the Claude Code CLI agent containers (deploy/main-agent.Dockerfile,
+# deploy/sub-agent.Dockerfile). They COPY only `agent/main-agent/` or `agent/sub-agent/`
+# — everything else is excluded.
+#
+# Note: bare patterns match at the build-context root only (Go filepath.Match
+# semantics). Patterns under a subdir (e.g. `__pycache__`) match recursively
+# because Docker treats directory names specially. Use `**/` to be explicit.
+
+# --- Git / Editor / OS ----------------------------------------------------
+.git
+.gitignore
+.gitattributes
+.cursor
+.claude
+.vscode
+.idea
+.DS_Store
+*.swp
+*.swo
+
+# --- Python build & cache (recursive) -------------------------------------
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
+.venv
+venv
+.pytest_cache
+.ruff_cache
+.mypy_cache
+build
+dist
+
+# --- Web (Next.js, not used by agent containers) -------------------------
+node_modules
+web
+
+# --- Secrets — NEVER bake into images ------------------------------------
+.env
+.env.*
+!.env.example
+*-sa-key.json
+gcs-sa-key.json
+*.pem
+
+# --- Local data -----------------------------------------------------------
+.artifacts
+*.log
+
+# --- Repo files NOT needed inside the agent containers --------------------
+# (containers carry only agent/main-agent/ or agent/sub-agent/ + workspace.)
+infra
+orchestrator
+scripts
+agent/__init__.py
+README.md
+CLAUDE.md
+meta-planning
+deploy
+pyproject.toml
+uv.lock
