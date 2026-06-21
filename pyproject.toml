@@ -1,0 +1,58 @@
+[project]
+name = "alpharesearch"
+version = "0.0.1"
+description = "Recursive automated-research platform: a Claude Agent SDK orchestrator dispatching research sub-agents into Modal sandboxes."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "claude-agent-sdk>=0.1",
+    "redis>=5.2",
+    "modal>=0.64",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sse-starlette>=2.1",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "httpx>=0.27",
+    "tenacity>=9.0",
+    "google-cloud-storage>=2.18",
+    "orjson>=3.10",
+]
+
+[project.optional-dependencies]
+# Light deps for local dev: lets DISPATCH_BACKEND=local run the whole tree
+# (stub experiments + synthetic plots) without the heavy ML stack.
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+    "matplotlib>=3.8",
+    "numpy>=1.26",
+]
+# The real prebaked trainer stack lives in the Modal image (infra/modal_app.py),
+# NOT installed locally (envpool has no macOS wheels). Listed here for reference.
+experiment = [
+    "torch>=2.2",
+    "numpy>=1.26",
+    "gymnasium>=0.29",
+    "minigrid>=2.3",
+    "matplotlib>=3.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agent", "infra", "orchestrator"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

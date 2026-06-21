@@ -1,0 +1,17 @@
+# Local dev infra. Redis Stack gives RedisJSON + Streams + Search (+ RedisInsight
+# on :8001). This is the only thing you need running for DISPATCH_BACKEND=local.
+#
+#   docker compose -f deploy/docker-compose.dev.yml up -d
+#
+services:
+  redis:
+    image: redis/redis-stack:latest
+    container_name: alpha-redis
+    ports:
+      - "6379:6379"   # Redis
+      - "8001:8001"   # RedisInsight UI
+    volumes:
+      - alpha-redis-data:/data
+
+volumes:
+  alpha-redis-data:
