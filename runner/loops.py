@@ -36,7 +36,7 @@ from infra.schemas import (
     RoundRecord,
     RunResult,
 )
-from runner.cloud_run_client import poll_cloud_run_exec, spawn_main_agent_job
+from runner.cloud_run_client import fetch_exec_logs, poll_cloud_run_exec, spawn_main_agent_job
 from runner.modal_client import (
     cancel_modal_call,
     poll_modal_call,
@@ -301,6 +301,13 @@ async def _finalize_failed(job, reason: str = "sandbox died") -> None:
     await store.write_run(RunResult(job_id=jid, status="failed", summary=reason))
     await store.set_job_status(jid, JobStatus.failed)
     await _emit(sid, jid, job.depth, EventType.status, {"status": "failed", "reason": reason})
+    # Surface the gcloud (Cloud Run Job) execution's log tail to chat so the user sees
+    # WHY the main agent died — otherwise a failed depth-0 job is opaque past "failed".
+    if job.backend == "cloud_run_job" and job.sandbox_id:
+        log_tail = await fetch_exec_logs(job.sandbox_id)
+        if log_tail:
+            await _emit(sid, jid, job.depth, EventType.error,
+                        {"reason": reason, "source": "cloud_run_logs", "lines": log_tail})
     await _cancel_orphans_if_terminal(job)
     # A failed depth-0 round must still advance the loop — otherwise an OOM/timeout
     # leaves loop status=running forever (no next round spawned, never reclaimed).

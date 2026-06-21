@@ -106,3 +106,52 @@ async def poll_cloud_run_exec(execution_name: str) -> Literal["running", "done",
     if getattr(execution, "completion_time", None):
         return "done" if getattr(execution, "succeeded_count", 0) else "failed"
     return "running"
+
+
+_log_client = None
+
+
+def _logs():
+    global _log_client
+    if _log_client is None:
+        from google.cloud import logging_v2
+        _log_client = logging_v2.services.logging_service_v2.LoggingServiceV2AsyncClient()
+    return _log_client
+
+
+async def fetch_exec_logs(execution_name: str, *, limit: int = 40) -> list[str]:
+    """Best-effort tail of a Cloud Run Job execution's stdout/stderr from Cloud
+    Logging, oldest→newest. Returns [] on any error — this is surfaced to chat for
+    diagnosis and must never break the reconcile path that calls it.
+
+    `execution_name` is the full resource path; Cloud Logging labels it by the
+    short execution id (the last path segment)."""
+    try:
+        exec_id = execution_name.rsplit("/", 1)[-1]
+        # Project is parsed from the execution path so we never depend on settings drift.
+        project = execution_name.split("/", 2)[1] if execution_name.startswith("projects/") \
+            else settings.gcp_project
+        flt = (
+            'resource.type="cloud_run_job" '
+            f'AND labels."run.googleapis.com/execution_name"="{exec_id}"'
+        )
+        resp = await _logs().list_log_entries(request={
+            "resource_names": [f"projects/{project}"],
+            "filter": flt,
+            "order_by": "timestamp desc",
+            "page_size": limit,
+        })
+        lines: list[str] = []
+        async for entry in resp:
+            text = entry.text_payload or ""
+            if not text and entry.json_payload:
+                text = str(dict(entry.json_payload).get("message", "")) or str(dict(entry.json_payload))
+            text = text.strip()
+            if text:
+                lines.append(text)
+            if len(lines) >= limit:
+                break
+        lines.reverse()  # list_log_entries gave newest-first; chat wants chronological
+        return lines
+    except Exception as e:  # noqa: BLE001 — diagnostics must never crash finalize
+        return [f"(could not fetch Cloud Run logs: {e!r})"]
