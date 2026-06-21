@@ -1,13 +1,13 @@
 """FastAPI API: create sessions, stream the per-session event bus over SSE.
 
 SSE is a pure `XREAD BLOCK` tailer of `session:{sid}:events` — it does not host the
-agent. For local/hackathon use, depth-0 `run_agent` runs as an in-process background
-task (plan §7 single-service shortcut); the decoupled path is `orchestrator/worker.py`.
+agent. Creating a session enqueues it on `sessions:queue`; the RUNNER (separate
+component) consumes that and launches the depth-0 main-agent (Claude Code) harness.
+The runner writes job/run/event records back to Redis, which this SSE endpoint streams.
 """
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
 from fastapi import FastAPI, Header, Request
@@ -16,10 +16,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-from agent.run_agent import run_agent
 from infra import store
 from infra.config import settings
-from infra.schemas import EventEnvelope, EventType, Job, JobKind
+from infra.schemas import Job, JobKind
 
 app = FastAPI(title="AlphaResearch API")
 app.add_middleware(
@@ -49,26 +48,9 @@ async def create_session(body: CreateSession) -> dict:
     await store.create_job(
         Job(id=root, session_id=sid, depth=0, kind=JobKind.agent, params={"goal": body.goal})
     )
-    asyncio.create_task(_run_root(root))
+    # Handoff: the runner consumes sessions:queue and launches the depth-0 harness.
+    await store.enqueue_session(sid)
     return {"session_id": sid, "root_job_id": root}
-
-
-async def _run_root(root_id: str) -> None:
-    try:
-        await run_agent(root_id)
-    except Exception as exc:  # surface as a failed-status event so the UI isn't left hanging
-        job = await store.get_job(root_id)
-        if job:
-            await store.set_job_status(root_id, "failed")
-            await store.emit_event(
-                EventEnvelope(
-                    session_id=job.session_id,
-                    job_id=root_id,
-                    depth=0,
-                    type=EventType.status,
-                    payload={"status": "failed", "error": str(exc)},
-                )
-            )
 
 
 @app.get("/sessions/{sid}")

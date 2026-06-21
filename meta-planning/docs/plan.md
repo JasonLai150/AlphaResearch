@@ -26,6 +26,8 @@ Stream tailer.
 ## Next
 - Build the runner that watches `.dispatched/` and spawns sub-agent containers
   (Modal or Docker) per dispatch record; write back `<job_id>.result.json`.
+  Seam ready: API enqueues `sessions:queue`; infra runs experiment jobs only and
+  leaves agent jobs `pending` for the runner (deleted-`run_agent` refs removed).
 - Run the full depth-0 agent loop over Modal; then API + web UI live demo.
 - Replace synthetic experiment stub with real minigrid+PPO training.
 - Cloud Run deploy (Phase 6).

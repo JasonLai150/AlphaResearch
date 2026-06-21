@@ -1,37 +1,24 @@
-"""Decoupled depth-0 worker (prod path): consume `sessions:queue` and run the
-root agent. The API's in-process background task (api.py) is the local shortcut;
-this is the horizontally-scalable alternative.
+"""Depth-0 session consumer — SUPERSEDED by the runner.
+
+Previously this consumed `sessions:queue` and ran the in-process SDK `run_agent`.
+That runtime was replaced by the Claude Code harness, and launching the depth-0
+main-agent container is now the RUNNER's job. This stub stays as documentation of
+the seam and intentionally does NOT consume `sessions:queue`, so it can't steal
+messages the runner needs.
+
+Contract for the runner: consume `store.SESSIONS_QUEUE`; for each `session_id`,
+resolve the root job (`store.get_root_job`) and launch the main-agent harness.
 """
 
 from __future__ import annotations
 
-import asyncio
-
-from agent.run_agent import run_agent
-from infra import store
-
-GROUP = "workers"
-
 
 async def run_worker() -> None:
-    r = store.get_redis()
-    try:
-        await r.xgroup_create(store.SESSIONS_QUEUE, GROUP, id="0", mkstream=True)
-    except Exception:
-        pass  # group already exists
-    consumer = store.new_id("worker")
-    while True:
-        resp = await r.xreadgroup(GROUP, consumer, {store.SESSIONS_QUEUE: ">"}, count=1, block=5000)
-        if not resp:
-            continue
-        for _stream, entries in resp:
-            for msg_id, fields in entries:
-                sid = fields.get("session_id")
-                root = await store.get_root_job(sid) if sid else None
-                if root:
-                    await run_agent(root)
-                await r.xack(store.SESSIONS_QUEUE, GROUP, msg_id)
+    raise NotImplementedError(
+        "Depth-0 execution moved to the runner; this worker no longer consumes "
+        "sessions:queue. See module docstring for the runner contract."
+    )
 
 
 if __name__ == "__main__":
-    asyncio.run(run_worker())
+    print(__doc__)

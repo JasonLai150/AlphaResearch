@@ -106,19 +106,21 @@ async def dispatch(
 
 
 async def _launch(job: Job) -> None:
+    # Agent jobs are Claude Code harness containers owned by the RUNNER (separate
+    # component): dispatch only creates the job + spawn event and leaves it `pending`
+    # for the runner to claim. The in-process SDK run_agent path was removed.
+    # Only experiment (non-agentic compute) jobs execute here.
+    if job.kind is not JobKind.experiment:
+        return
+
     backend = settings.dispatch_backend
     if backend == "local":
         # In-process so the whole tree runs against a local Redis with no cloud.
         # Children run to completion before dispatch returns (deterministic for P0);
         # real parallelism is the modal path.
-        if job.kind is JobKind.experiment:
-            from infra.registry.experiment import run_experiment_stub
+        from infra.registry.experiment import run_experiment_stub
 
-            await run_experiment_stub(job)
-        else:
-            from agent.run_agent import run_agent
-
-            await run_agent(job.id)
+        await run_experiment_stub(job)
     elif backend == "modal":
         from infra.modal_app import spawn_job
 
