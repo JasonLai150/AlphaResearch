@@ -42,6 +42,11 @@ async def spawn_sub_agent(job_id: str, session_id: str, record: dict) -> str:
         internal_token=token,
         internal_runner_url=settings.internal_runner_url,
         dispatch_record=json.dumps(record),
+        # wandb + Browserbase identifiers so the sub-agent can deterministically
+        # screenshot its OWN wandb run (secrets ride in the Modal alpha-secrets).
+        wandb_entity=settings.wandb_entity,
+        browserbase_context_id=settings.browserbase_context_id,
+        browserbase_project_id=settings.browserbase_project_id,
     )
     return call.object_id
 
