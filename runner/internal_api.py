@@ -32,6 +32,7 @@ from infra.schemas import (
     JobKind,
     JobStatus,
     Message,
+    RoundRecord,
     RunResult,
 )
 
@@ -83,13 +84,29 @@ async def get_bootstrap(caller: Caller = Depends(require_caller)) -> dict:
     doc = await store.get_redis().json().get(store._session_key(sid))
     if not doc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown session")
-    return {
+    out = {
         "session_id": sid,
         "root_job_id": doc.get("root_job_id"),
         "goal": doc.get("goal", ""),
         "mode": doc.get("mode", "oneshot"),
         "depth": 0,
     }
+    # Autonomous loop: tell the agent which round it's on + prior rounds' bests, so it
+    # can deepen/escalate instead of replanning blind. (The runner owns the stop
+    # decision; this is read-only context for the round.)
+    if out["mode"] == "autonomous":
+        loop = await store.get_loop(sid)
+        if loop is not None:
+            out["loop"] = {
+                "round": len(loop.rounds) + 1,
+                "max_rounds": loop.max_rounds,
+                "goal_metric": loop.goal_metric,
+                "prior_rounds": [
+                    {"round_index": r.round_index, "best_metric": r.best_metric,
+                     "summary": r.summary} for r in loop.rounds
+                ],
+            }
+    return out
 
 
 # ---- request bodies ----------------------------------------------------
@@ -253,6 +270,41 @@ async def post_result(r: ResultIn, caller: Caller = Depends(require_caller)) -> 
         depth=job.depth, type=EventType.summary,
         payload={"summary": r.summary[:240], "metrics": r.metrics,
                  "reported_status": status_l}))
+    return {"recorded": True}
+
+
+# ---- autonomous loop: agent reports a completed round ------------------
+
+class RoundIn(BaseModel):
+    session_id: str
+    job_id: str                  # this round's depth-0 agent execution
+    round_index: int
+    plan_id: str | None = None
+    best_metric: float | None = None
+    summary: str = Field(default="", max_length=2000)
+
+
+@router.post("/loop/round", status_code=202, include_in_schema=False)
+async def post_loop_round(rd: RoundIn, caller: Caller = Depends(require_caller)) -> dict:
+    """The agent reports its round's outcome (best metric + plan) BEFORE it exits.
+    The runner reads these at the round boundary to apply the stop policy. We only
+    record facts here; the continue/stop decision is the runner's."""
+    _enforce_session(caller, rd.session_id)
+    loop = await store.get_loop(rd.session_id)
+    if loop is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "session has no autonomous loop")
+    # Idempotent + spam-proof: one round per depth-0 job. A retrying agent (or one
+    # whose result the runner already backstopped) can't inflate len(rounds) and trip
+    # max_rounds early. round_index is assigned authoritatively, not trusted.
+    if any(r.job_id == rd.job_id for r in loop.rounds):
+        return {"recorded": True, "duplicate": True}
+    await store.append_round(rd.session_id, RoundRecord(
+        round_index=len(loop.rounds) + 1, job_id=rd.job_id, plan_id=rd.plan_id,
+        best_metric=rd.best_metric, summary=rd.summary))
+    await store.emit_event(EventEnvelope(
+        session_id=rd.session_id, job_id=rd.job_id, depth=0, type=EventType.summary,
+        payload={"phase": "round_synthesized", "round_index": rd.round_index,
+                 "best_metric": rd.best_metric, "summary": rd.summary[:240]}))
     return {"recorded": True}
 
 

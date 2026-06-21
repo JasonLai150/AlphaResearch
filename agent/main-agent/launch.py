@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -29,6 +30,15 @@ from _push import push  # noqa: E402  (stdlib-only HTTP helper, shared with hook
 from stream_relay import relay  # noqa: E402
 
 _BOOTSTRAP_ATTEMPTS = 5
+
+# Post-deploy smoke (ALPHA_SMOKE=1, set as a per-execution override by
+# scripts/verify_deploy.sh): prove the *deployed* image actually boots and can
+# reach Anthropic, using the real container + service account + mounted secrets —
+# without a runner, a session token, or a 4h agent run. A created Cloud Run Job is
+# never exercised until the first real chat, so this is the only quick, high-fidelity
+# signal that the agent image isn't silently broken on GCP.
+_SMOKE_MODEL = "claude-haiku-4-5-20251001"  # cheapest model; the round-trip is what matters
+_SMOKE_TIMEOUT_S = 120
 
 
 def _bootstrap(runner_url: str, token: str) -> dict:
@@ -45,8 +55,9 @@ def _bootstrap(runner_url: str, token: str) -> dict:
     raise SystemExit(f"[launch] bootstrap failed after {_BOOTSTRAP_ATTEMPTS}: {last!r}")
 
 
-def _prompt(goal: str) -> str:
-    return (
+def _prompt(ctx: dict) -> str:
+    goal = (ctx.get("goal") or "").strip()
+    base = (
         "You are the research director for an autonomous RL research session.\n\n"
         f"The user's goal:\n{goal}\n\n"
         "This is a NON-INTERACTIVE batch run — there is no human to answer questions. "
@@ -54,8 +65,34 @@ def _prompt(goal: str) -> str:
         "  1. State your key assumptions explicitly (do NOT ask the user anything).\n"
         "  2. Use the research skill to produce one ResearchPlan.\n"
         "  3. Dispatch one sub-agent per idea (dispatch-subagents skill).\n"
-        "  4. Wait for the children, then synthesize their results.\n"
-        "Run to completion and exit. Never block waiting for user input."
+        "  4. Wait for the children, synthesize their results, and produce Plotly\n"
+        "     figures of the findings (plotly-graphs skill).\n"
+    )
+    loop = ctx.get("loop") if ctx.get("mode") == "autonomous" else None
+    if not loop:
+        return base + "Run to completion and exit. Never block waiting for user input."
+
+    prior = loop.get("prior_rounds") or []
+    prior_lines = "\n".join(
+        f"    - round {p.get('round_index')}: best_metric={p.get('best_metric')} "
+        f"— {(p.get('summary') or '')[:120]}"
+        for p in prior
+    ) or "    (none yet — this is the first round)"
+    return (
+        base
+        + (
+            f"\nThis is ONE ROUND of an AUTONOMOUS LOOP: round {loop.get('round')} of "
+            f"max {loop.get('max_rounds')}"
+            + (f" (target metric {loop.get('goal_metric')})" if loop.get("goal_metric") else "")
+            + ".\nPrior rounds:\n" + prior_lines + "\n\n"
+            "Use the prior rounds to DECIDE this round's direction: deepen the current "
+            "approach if it's still gaining, or escalate to a new approach class if it's "
+            "plateaued. When the round is done, BEFORE exiting, report it:\n"
+            f"    python3 scripts/report_round.py --round-index {loop.get('round')} "
+            "--plan-id <plan_id> --best-metric <value> --summary <one line>\n"
+            "Then exit. Do NOT loop here yourself — the runner applies the stop policy "
+            "and spawns the next round. Run this one round to completion and exit."
+        )
     )
 
 
@@ -76,7 +113,42 @@ def _build_argv(prompt: str, model: str) -> list[str]:
     ]
 
 
+def _smoke() -> None:
+    """Real `claude` round-trip inside the deployed container. Exits 0 only if the
+    Claude Code CLI is installed, ANTHROPIC_API_KEY is mounted+valid, and network
+    egress to Anthropic works. The process exit code is the Cloud Run execution's
+    exit code, so `gcloud run jobs execute --wait` surfaces any failure directly."""
+    problems = []
+    if shutil.which("claude") is None:
+        problems.append("`claude` not on PATH (broken agent image)")
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        problems.append("ANTHROPIC_API_KEY missing (secret not mounted)")
+    if problems:
+        raise SystemExit("[smoke] FAIL: " + "; ".join(problems))
+
+    model = os.environ.get("ALPHA_MODEL") or _SMOKE_MODEL
+    print(f"[smoke] claude round-trip model={model} timeout={_SMOKE_TIMEOUT_S}s", file=sys.stderr)
+    try:
+        r = subprocess.run(
+            ["claude", "-p", "Respond with exactly: SMOKE_OK",
+             "--model", model, "--dangerously-skip-permissions"],
+            capture_output=True, text=True, timeout=_SMOKE_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        raise SystemExit(f"[smoke] FAIL: claude timed out after {_SMOKE_TIMEOUT_S}s (egress/API stall)")
+    tail = ((r.stdout or "") + (r.stderr or ""))[-800:]
+    if r.returncode != 0:
+        raise SystemExit(f"[smoke] FAIL: claude exited {r.returncode}\n{tail}")
+    if "SMOKE_OK" not in (r.stdout or ""):
+        raise SystemExit(f"[smoke] FAIL: unexpected model output\n{tail}")
+    print("[smoke] OK — CLI + API key + egress verified inside the deployed image", file=sys.stderr)
+
+
 def main() -> None:
+    if os.environ.get("ALPHA_SMOKE", "").strip().lower() in ("1", "true", "yes"):
+        _smoke()
+        return
+
     runner_url = os.environ.get("ALPHA_INTERNAL_RUNNER_URL", "")
     token = os.environ.get("ALPHA_INTERNAL_TOKEN", "")
     model = os.environ.get("ALPHA_MODEL", "claude-sonnet-4-6")
@@ -100,7 +172,8 @@ def main() -> None:
 
     # Spawn claude (don't exec) so we can tail its stream-json stdout and relay
     # assistant text deltas to the runner. stderr inherits -> Cloud Run logs.
-    argv = _build_argv(_prompt(goal), model)
+    # _prompt takes the full bootstrap ctx (it's autonomous-loop aware via ctx["loop"]).
+    argv = _build_argv(_prompt(ctx), model)
     proc = subprocess.Popen(argv, stdout=subprocess.PIPE, text=True, bufsize=1)
     relay_exc: Exception | None = None
     try:

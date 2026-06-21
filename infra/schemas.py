@@ -117,6 +117,45 @@ class ArtifactRef(BaseModel):
     bytes: int = 0
 
 
+class LoopStatus(StrEnum):
+    """Terminal definition for an AUTONOMOUS session's research loop. Distinct from
+    JobStatus: a job is one round's process; the loop spans many rounds."""
+
+    running = "running"                      # non-terminal: mid-round or between rounds
+    completed = "completed"                  # stop policy satisfied (goal/max_rounds/plateau)
+    stopped = "stopped"                      # user halted
+    budget_exhausted = "budget_exhausted"    # session budget hit zero
+    failed = "failed"                        # unrecoverable
+
+
+class RoundRecord(BaseModel):
+    """One completed round, reported by the agent via POST /internal/loop/round."""
+
+    round_index: int
+    job_id: str                              # the depth-0 agent execution for this round
+    plan_id: str | None = None
+    best_metric: float | None = None         # the round's best target-metric value
+    summary: str = ""
+    ended_at: str = Field(default_factory=_now)
+
+
+class Loop(BaseModel):
+    """An autonomous session's loop state (Redis key ``loop:{sid}``). The runner owns
+    its terminal decision (see infra.loop_policy); the agent only appends rounds."""
+
+    session_id: str
+    status: LoopStatus = LoopStatus.running
+    max_rounds: int = Field(gt=0)            # hard backstop — a loop can never run forever
+    goal_metric: float | None = None         # stop early once a round reaches this
+    plateau_k: int = Field(default=3, ge=1)  # stop if no new best over this many rounds
+    stop_requested: bool = False              # set by POST /sessions/{id}/stop
+    current_job_id: str | None = None         # the round currently spawned/running
+    stop_reason: str = ""
+    rounds: list[RoundRecord] = Field(default_factory=list)
+    created_at: str = Field(default_factory=_now)
+    updated_at: str = Field(default_factory=_now)
+
+
 class EventEnvelope(BaseModel):
     """One message on the per-session event bus (Redis Stream)."""
 

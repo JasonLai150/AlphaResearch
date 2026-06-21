@@ -39,6 +39,11 @@ pure Redis Stream tailer.
 - **Frontend-complete pass** (`feat/frontend-complete`): toast + full error/empty/loading UX,
   pending-timeout, responsive drawers, real ContextBar, Vitest+RTL tests, eslint/prettier, deploy docs.
 
+## Competence direction (post-MVP)
+Make the director more competent on 3 axes — sharper single session, cross-chat continuity,
+long-horizon self-improvement — via one primitive: a verification-gated, conditions-stamped
+**Findings Store** (persist verified facts, regenerate plans fresh). See [`competence-plan.md`](./competence-plan.md).
+
 ## Next (milestones — see tasks.md for granular checkboxes)
 - M0 ✅ tests · M1 ✅ runner · M2 ✅ containers · M7 ✅ deploy tooling — delivered in PR #8.
 - Phase 1 visibility: add Sentry traces/logs around the API, runner, internal API, Cloud Run

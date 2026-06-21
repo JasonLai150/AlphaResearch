@@ -106,4 +106,81 @@ class ResearchPlan(BaseModel):
         return next((i for i in self.ideas if i.id == idea_id), None)
 
 
-__all__ = ["DiversityTag", "ResearchIdea", "ResearchPlan"]
+class GraphKind(StrEnum):
+    """Chart kinds render_graph.py knows how to draw deterministically."""
+
+    line = "line"        # training curves, metric-vs-steps
+    bar = "bar"          # per-idea deltas vs baseline
+    scatter = "scatter"  # x/y relationships (e.g. cost vs return)
+
+
+class GraphSeries(BaseModel):
+    """One named trace. The agent supplies DATA ONLY — never colors or styling."""
+
+    name: str
+    x: list[float | str]  # numeric (steps) OR categorical labels (idea names for bars)
+    y: list[float]
+    error_y: list[float] | None = None  # optional symmetric error bars (e.g. seed std)
+
+    @field_validator("name")
+    @classmethod
+    def _nonempty(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("series name must be non-empty")
+        return v
+
+    @model_validator(mode="after")
+    def _lengths_match(self) -> GraphSeries:
+        if len(self.x) != len(self.y):
+            raise ValueError(
+                f"series '{self.name}': x and y must be equal length "
+                f"(x={len(self.x)}, y={len(self.y)})"
+            )
+        if self.error_y is not None and len(self.error_y) != len(self.y):
+            raise ValueError(
+                f"series '{self.name}': error_y must match y length "
+                f"(error_y={len(self.error_y)}, y={len(self.y)})"
+            )
+        return self
+
+
+class GraphSpec(BaseModel):
+    """Declarative graph the main agent writes to ``.graphs/specs/<id>.json``.
+
+    Pure content: chart kind, labels, and data series. ALL styling (theme, colors,
+    fonts, layout) is owned by render_graph.py, so the same spec always renders the
+    same beautiful Plotly figure — determinism by construction. A PostToolUse hook
+    validates this shape on write; render_graph.py re-validates before drawing.
+    """
+
+    schema_version: int = 1
+    id: str                              # kebab slug; also the output filename
+    kind: GraphKind
+    title: str
+    x_label: str = ""
+    y_label: str = ""
+    series: list[GraphSeries]
+    caption: str | None = None
+    meta: dict = Field(default_factory=dict)  # provenance: env_id, target_metric, job ids
+
+    @field_validator("id", "title")
+    @classmethod
+    def _nonempty(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("must be non-empty")
+        return v
+
+    @field_validator("series")
+    @classmethod
+    def _at_least_one(cls, v: list) -> list:
+        if not v:
+            raise ValueError("a graph needs at least one series")
+        return v
+
+
+__all__ = [
+    "DiversityTag", "ResearchIdea", "ResearchPlan",
+    "GraphKind", "GraphSeries", "GraphSpec",
+]

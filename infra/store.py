@@ -27,7 +27,10 @@ from infra.schemas import (
     EventType,
     Job,
     JobStatus,
+    Loop,
+    LoopStatus,
     Message,
+    RoundRecord,
     RunResult,
     Session,
 )
@@ -133,6 +136,72 @@ async def read_state(session_id: str) -> dict:
         "jobs": [j.model_dump() for j in jobs],
         "runs": [run.model_dump() for run in runs],
     }
+
+
+# ---- autonomous loops ---------------------------------------------------
+
+def _loop_key(sid: str) -> str:
+    return f"loop:{sid}"
+
+
+def _loop_now() -> str:
+    from infra.schemas import _now
+    return _now()
+
+
+async def create_loop(
+    session_id: str, max_rounds: int, goal_metric: float | None = None,
+    plateau_k: int = 3, current_job_id: str | None = None,
+) -> Loop:
+    loop = Loop(session_id=session_id, max_rounds=max_rounds, goal_metric=goal_metric,
+                plateau_k=plateau_k, current_job_id=current_job_id)
+    await get_redis().json().set(_loop_key(session_id), "$", loop.model_dump())
+    return loop
+
+
+async def get_loop(session_id: str) -> Loop | None:
+    doc = await get_redis().json().get(_loop_key(session_id))
+    return Loop.model_validate(doc) if doc else None
+
+
+async def append_round(session_id: str, record: RoundRecord) -> None:
+    r = get_redis()
+    key = _loop_key(session_id)
+    if not await r.exists(key):
+        return
+    async with r.pipeline(transaction=True) as p:
+        p.json().arrappend(key, "$.rounds", record.model_dump())
+        p.json().set(key, "$.updated_at", _loop_now())
+        await p.execute()
+
+
+async def set_loop_status(session_id: str, status: LoopStatus | str, reason: str = "") -> None:
+    r = get_redis()
+    key = _loop_key(session_id)
+    if not await r.exists(key):
+        return
+    v = status.value if isinstance(status, LoopStatus) else str(status)
+    async with r.pipeline(transaction=True) as p:
+        p.json().set(key, "$.status", v)
+        p.json().set(key, "$.stop_reason", reason)
+        p.json().set(key, "$.updated_at", _loop_now())
+        await p.execute()
+
+
+async def request_loop_stop(session_id: str) -> None:
+    r = get_redis()
+    key = _loop_key(session_id)
+    if not await r.exists(key):
+        return
+    await r.json().set(key, "$.stop_requested", True)
+
+
+async def set_loop_current_job(session_id: str, job_id: str) -> None:
+    r = get_redis()
+    key = _loop_key(session_id)
+    if not await r.exists(key):
+        return
+    await r.json().set(key, "$.current_job_id", job_id)
 
 
 # ---- jobs ---------------------------------------------------------------
