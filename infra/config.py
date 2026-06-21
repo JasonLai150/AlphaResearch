@@ -6,8 +6,13 @@ Most settings use the ALPHA_ prefix; a few honor external conventions
 
 from __future__ import annotations
 
-from pydantic import AliasChoices, Field, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# redis-py's from_url() only accepts these schemes; anything else raises deep inside a
+# swallowed loop exception (leadership_loop) and the runner silently never leads. Validate
+# at Settings load so a malformed ALPHA_REDIS_URL secret fails LOUDLY on boot instead.
+_VALID_REDIS_SCHEMES = ("redis://", "rediss://", "unix://")
 
 
 class Settings(BaseSettings):
@@ -23,6 +28,22 @@ class Settings(BaseSettings):
         default="redis://localhost:6379/0",
         validation_alias=AliasChoices("ALPHA_REDIS_URL", "REDIS_URL"),
     )
+
+    @field_validator("redis_url")
+    @classmethod
+    def _require_redis_scheme(cls, v: str) -> str:
+        # Strip surrounding whitespace (a stray newline/space before the scheme also
+        # trips from_url) and reject anything without a valid scheme — e.g. a bare
+        # host:port, or a pasted "ALPHA_REDIS_URL=redis://..." env line stored verbatim
+        # as the secret value (a real incident: it buries the scheme mid-string).
+        s = v.strip()
+        if not s.startswith(_VALID_REDIS_SCHEMES):
+            raise ValueError(
+                "ALPHA_REDIS_URL must start with redis://, rediss://, or unix:// — got a "
+                "value with no valid scheme at the front (bare host:port, or a verbatim "
+                "'ALPHA_REDIS_URL=...' env line). Fix the secret/env value."
+            )
+        return s
 
     # Dispatch
     dispatch_backend: str = "local"  # "local" | "modal"
