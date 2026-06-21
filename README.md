@@ -95,3 +95,52 @@ The secret name must be `alpha-secrets` (referenced in `infra/modal_app.py`). GC
 need a service-account credential — use the Modal dashboard's Google Cloud secret template,
 or leave `ALPHA_GCS_BUCKET` unset to fall back to local-disk artifacts while validating the
 Modal compute path first.
+
+## Frontend (`web/`)
+
+The Next.js app talks to the FastAPI API over REST + SSE. For local development you
+can run the API in **local-sim** mode (a scripted research run per session, no cloud
+credentials) and point the web app at it:
+
+```bash
+# Terminal 1 — API in local-sim mode (no Cloud Run/Modal, no ANTHROPIC_API_KEY)
+ALPHA_RUNNER_ENABLED=false ALPHA_LOCAL_SIM=true \
+  uv run uvicorn orchestrator.api:app --port 8080
+
+# Terminal 2 — Next.js dev server (http://localhost:3000)
+cd web && npm run dev
+```
+
+Copy `web/.env.example` to `web/.env.local` first. With Clerk left unset the web app
+runs keyless as a fixed "demo" user (see `web/lib/auth-config.ts`); the API similarly
+stays in open dev mode while `ALPHA_CLERK_JWKS_URL` is unset.
+
+## Production deploy
+
+Deploy the API (Cloud Run / your host of choice), then configure the three boundaries —
+the web → API URL, Clerk auth on both sides, and CORS:
+
+1. **Point the web app at the deployed API.** Set `NEXT_PUBLIC_API_URL` in the web
+   environment to the deployed API origin (e.g. `https://api.example.com`). It is
+   inlined at build time (`web/lib/types.ts` reads `process.env.NEXT_PUBLIC_API_URL`),
+   so set it before building the frontend.
+
+2. **Enable Clerk.** Without these the app runs as the open "demo" user, so set them
+   in production:
+   - Web: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` + `CLERK_SECRET_KEY` (from the Clerk
+     dashboard). Setting the publishable key flips `CLERK_ENABLED` on, requiring
+     sign-in and sending a verified token to the API.
+   - Backend: `ALPHA_CLERK_JWKS_URL` (e.g.
+     `https://<subdomain>.clerk.accounts.dev/.well-known/jwks.json`) and
+     `ALPHA_CLERK_ISSUER` (**required** whenever the JWKS URL is set — the API fails
+     fast otherwise). `ALPHA_CLERK_AUDIENCE` is optional. Run `uv sync --extra auth`
+     so the JWT-verification deps are present.
+
+3. **Set CORS to the deployed web origin.** The API's allowed browser origins are
+   env-driven via `ALPHA_CORS_ALLOW_ORIGINS` (backs `settings.cors_allow_origins` in
+   `infra/config.py`; defaults to `["http://localhost:3000"]`). It is parsed as a JSON
+   list, so set it to your deployed web origin(s):
+
+   ```bash
+   ALPHA_CORS_ALLOW_ORIGINS='["https://app.example.com"]'
+   ```
