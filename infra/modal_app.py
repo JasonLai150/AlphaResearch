@@ -61,12 +61,13 @@ async def run_job(job_id: str) -> None:
         await run_agent(job_id)
 
 
-def spawn_job(job_id: str) -> str:
-    """Spawn run_job, return the Modal call id. Works both from Cloud Run (local
-    reference) and nested inside Modal (resolve the deployed function by name)."""
+async def spawn_job(job_id: str) -> str:
+    """Spawn run_job, return the Modal call id. Async (.spawn.aio) — callers run inside
+    an asyncio loop, where blocking .spawn() warns and can stall the event loop. Works
+    both from the local/Cloud Run reference and nested inside Modal (resolve by name)."""
     try:
-        call = run_job.spawn(job_id)
+        call = await run_job.spawn.aio(job_id)
     except Exception:
         fn = modal.Function.from_name(APP_NAME, "run_job")
-        call = fn.spawn(job_id)
+        call = await fn.spawn.aio(job_id)
     return call.object_id

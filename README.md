@@ -6,7 +6,11 @@ sub-agents — each in its own Modal sandbox — to explore strategies in parall
 report summaries back up. State, the event bus, the job queue, and the compute
 budget all live in Redis; artifacts live in GCS.
 
-See the full build plan: `~/.claude/plans/high-level-we-are-building-hashed-lerdorf.md`.
+Plan & tasks: `meta-planning/docs/plan.md`, `meta-planning/docs/tasks.md`; design
+rationale: `meta-planning/docs/design.md`.
+
+**Status:** cloud backplane (Redis Cloud + GCS + Modal) wired and verified end-to-end
+via `scripts/smoke_modal.py`. Next: full agent loop over Modal, then the live web demo.
 
 ## Layout
 
