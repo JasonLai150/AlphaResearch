@@ -13,6 +13,14 @@
 - [x] Modal sandbox round-trip verified (`scripts/smoke_modal.py`)
 - [x] Async spawn fix (`spawn.aio`) for parallel dispatch
 
+## Agent harness (Claude Code CLI, files-only)
+- [x] `agent/main-agent/`: CLAUDE.md + `.claude/settings.json` + skills (`research`, `dispatch-subagents`)
+- [x] `agent/main-agent/scripts/`: `schemas.py` (ResearchPlan/Idea/DiversityTag) + `dispatch_subagent.py`
+- [x] `agent/main-agent/.claude/hooks/`: `validate_dispatch.py` (PreToolUse Bash) + `cap_web_fetch.py` (PostToolUse Web*)
+- [x] `agent/sub-agent/` (minimal): CLAUDE.md + `.claude/settings.json` (Web* denied) + `validated-findings` skill
+- [ ] Dockerfiles + entrypoints (`claude --dangerously-skip-permissions`) for both containers
+- [ ] Runner: watch `.dispatched/*.json` → spawn sub-agent container → write `<job_id>.result.json`
+
 ## Next
 - [ ] Full depth-0 Claude agent loop over Modal (`scripts/run_depth0.py`)
 - [ ] API + web UI live demo over the cloud backplane
