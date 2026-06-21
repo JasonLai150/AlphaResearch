@@ -238,6 +238,76 @@ async def test_result_failed_status_marks_job_failed(client, fake_redis):
     assert (await store.get_job("j_c")).status == JobStatus.failed
 
 
+async def _seed_child_with_plan(target_metric="score"):
+    await _seed_parent()
+    await store.create_job(Job(id="j_c", session_id="s_a", parent_job_id="j_root", depth=1,
+                               kind=JobKind.agent, status=JobStatus.running,
+                               params={"plan": {"target_metric": target_metric},
+                                       "idea_id": "idea_1"}))
+
+
+async def test_result_done_passes_contract_with_target_metric(client, fake_redis):
+    """A clean success that carries the plan's target_metric stays 'done'."""
+    await _seed_child_with_plan(target_metric="score")
+    tok = await store.mint_agent_token("s_a")
+    r = await client.post("/internal/result",
+                          json={"job_id": "j_c", "session_id": "s_a", "status": "done",
+                                "summary": "ok", "metrics": {"score": 0.8}},
+                          headers=_bearer(tok))
+    assert r.status_code == 202 and r.json()["contract_violations"] == []
+    run = await store.get_run("j_c")
+    assert run.status == "done" and run.contract_violations == []
+    assert (await store.get_job("j_c")).status == JobStatus.done
+
+
+async def test_result_done_missing_target_metric_downgraded_to_partial(client, fake_redis):
+    """Idea 1: a 'done' claim with no target_metric is recorded but downgraded to
+    'partial' with the violation attached — never silently ranked as a real finding."""
+    await _seed_child_with_plan(target_metric="mean_return_at_500k_steps")
+    tok = await store.mint_agent_token("s_a")
+    r = await client.post("/internal/result",
+                          json={"job_id": "j_c", "session_id": "s_a", "status": "done",
+                                "summary": "claims success", "metrics": {"some_other_key": 1.0}},
+                          headers=_bearer(tok))
+    assert r.status_code == 202
+    viol = r.json()["contract_violations"]
+    assert any("mean_return_at_500k_steps" in v for v in viol)
+    run = await store.get_run("j_c")
+    assert run.status == "partial" and run.contract_violations == viol
+    # never dropped — the result is still recorded, job still terminal.
+    assert (await store.get_job("j_c")).status == JobStatus.done
+
+
+async def test_result_validated_without_baseline_or_seeds_downgraded(client, fake_redis):
+    """validated:true demands a baseline comparison AND >=2 seeds; a single-seed claim
+    with no baseline is downgraded and de-validated."""
+    await _seed_child_with_plan(target_metric="score")
+    tok = await store.mint_agent_token("s_a")
+    r = await client.post("/internal/result",
+                          json={"job_id": "j_c", "session_id": "s_a", "status": "done",
+                                "summary": "one lucky seed", "validated": True,
+                                "metrics": {"score": 0.9, "n_seeds": 1}},
+                          headers=_bearer(tok))
+    assert r.status_code == 202
+    run = await store.get_run("j_c")
+    assert run.status == "partial" and run.validated is False
+    assert any("baseline" in v for v in run.contract_violations)
+    assert any("n_seeds" in v for v in run.contract_violations)
+
+
+async def test_result_failed_not_contract_checked(client, fake_redis):
+    """An honest negative finding (status=failed) is allowed to be thin — no contract
+    violations forced on it."""
+    await _seed_child_with_plan(target_metric="score")
+    tok = await store.mint_agent_token("s_a")
+    r = await client.post("/internal/result",
+                          json={"job_id": "j_c", "session_id": "s_a", "status": "failed",
+                                "summary": "no improvement", "metrics": {}},
+                          headers=_bearer(tok))
+    assert r.status_code == 202 and r.json()["contract_violations"] == []
+    assert (await store.get_job("j_c")).status == JobStatus.failed
+
+
 async def test_result_is_idempotent(client, fake_redis):
     await _seed_parent()
     await store.create_job(Job(id="j_c", session_id="s_a", parent_job_id="j_root", depth=1,

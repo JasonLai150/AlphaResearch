@@ -63,7 +63,11 @@ def fetch_children(base_url: str, job_id: str, token: str) -> list:
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description="Wait for child sub-agents to finish.")
     ap.add_argument("job_ids", nargs="+", help="job ids to wait on")
-    ap.add_argument("--timeout", type=int, default=1800, help="overall timeout in seconds")
+    # Default matches the Modal sub-agent cap (2h): a sub-agent training on a CPU learner
+    # can run far longer than the old 30min default, and giving up early is exactly what
+    # excluded slow children from synthesis. Pass plan.wait_timeout_seconds() explicitly
+    # when you know the plan's wall-clock budget.
+    ap.add_argument("--timeout", type=int, default=7200, help="overall timeout in seconds")
     ap.add_argument("--poll-sec", type=float, default=5.0, help="seconds between polls")
     args = ap.parse_args(argv)
 

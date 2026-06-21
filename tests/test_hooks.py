@@ -194,8 +194,10 @@ def test_sub_finalize_posts_result_and_artifacts(recorder, tmp_path):
     assert a["name"] == "loss.png" and a["kind"] == "plot" and a["b64"]
 
 
-def test_sub_finalize_missing_result_posts_failed(recorder, tmp_path):
-    """PR2: no result.json -> a 'failed' result is still POSTed so the runner finalizes."""
+def test_sub_finalize_missing_result_blocks_first_stop(recorder, tmp_path):
+    """Idea 2: no result.json on the FIRST stop -> BLOCK (hand the agent a fix), do NOT
+    POST a failed result yet. This is what converts the ~1-in-3 'no result.json' runs
+    into real results instead of giving up immediately."""
     ws = tmp_path / "workspace"
     dispatch = tmp_path / "dispatched"
     ws.mkdir()
@@ -203,12 +205,80 @@ def test_sub_finalize_missing_result_posts_failed(recorder, tmp_path):
         recorder.base_url, ALPHA_DEPTH="1", ALPHA_JOB_ID="j_c",
         ALPHA_WORKSPACE=str(ws), ALPHA_DISPATCH_DIR=str(dispatch),
     )
-    proc = _run_hook(SUB_HOOKS / "finalize.py", "", env)
+    proc = _run_hook(SUB_HOOKS / "finalize.py", "{}", env)
+    assert proc.returncode == 0, proc.stderr
+    decision = json.loads(proc.stdout)
+    assert decision["decision"] == "block"
+    assert "result.json" in decision["reason"]
+    assert [r for r in recorder.records if r["path"] == "/internal/result"] == []  # no post
+
+
+def test_sub_finalize_missing_result_posts_failed_on_restop(recorder, tmp_path):
+    """Idea 2: with stop_hook_active set (the re-stop after a block), we never block
+    again — POST the failed result so the runner finalizes rather than the agent wedging."""
+    ws = tmp_path / "workspace"
+    dispatch = tmp_path / "dispatched"
+    ws.mkdir()
+    env = _base_env(
+        recorder.base_url, ALPHA_DEPTH="1", ALPHA_JOB_ID="j_c",
+        ALPHA_WORKSPACE=str(ws), ALPHA_DISPATCH_DIR=str(dispatch),
+    )
+    proc = _run_hook(SUB_HOOKS / "finalize.py", json.dumps({"stop_hook_active": True}), env)
     assert proc.returncode == 0, proc.stderr
     posts = [r for r in recorder.records if r["path"] == "/internal/result"]
     assert len(posts) == 1
     assert posts[0]["body"]["status"] == "failed"
     assert posts[0]["body"]["artifacts"] == []
+
+
+def test_sub_finalize_blocks_on_success_without_target_metric(recorder, tmp_path):
+    """Idea 1+2: result.json claims 'done' but is missing the plan's target_metric ->
+    block once with a metric-key-specific fix."""
+    ws = tmp_path / "workspace"
+    dispatch = tmp_path / "dispatched"
+    ws.mkdir()
+    (ws / "result.json").write_text(json.dumps({
+        "job_id": "j_c", "status": "done", "summary": "done", "metrics": {"wrong_key": 1.0},
+    }))
+    rec = dispatch / "j_c.json"
+    rec.parent.mkdir(parents=True, exist_ok=True)
+    rec.write_text(json.dumps({"plan": {"target_metric": "mean_return_at_500k_steps"}}))
+    env = _base_env(
+        recorder.base_url, ALPHA_DEPTH="1", ALPHA_JOB_ID="j_c",
+        ALPHA_WORKSPACE=str(ws), ALPHA_DISPATCH_DIR=str(dispatch),
+    )
+    proc = _run_hook(SUB_HOOKS / "finalize.py", "{}", env)
+    assert proc.returncode == 0, proc.stderr
+    decision = json.loads(proc.stdout)
+    assert decision["decision"] == "block"
+    assert "mean_return_at_500k_steps" in decision["reason"]
+    assert [r for r in recorder.records if r["path"] == "/internal/result"] == []
+
+
+def test_sub_finalize_ships_transcript_debug_log(recorder, tmp_path):
+    """The Stop hook stages the Claude transcript into the artifacts dir as a `log`
+    artifact, so each sub-agent's full reasoning/tool trace is probeable later."""
+    ws = tmp_path / "workspace"
+    dispatch = tmp_path / "dispatched"
+    ws.mkdir()
+    (ws / "result.json").write_text(json.dumps({
+        "job_id": "j_c", "status": "done", "summary": "ok", "metrics": {"score": 0.5},
+    }))
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text('{"role":"assistant","content":"trained ppo, score 0.5"}\n')
+    env = _base_env(
+        recorder.base_url, ALPHA_DEPTH="1", ALPHA_JOB_ID="j_c",
+        ALPHA_WORKSPACE=str(ws), ALPHA_DISPATCH_DIR=str(dispatch),
+    )
+    proc = _run_hook(SUB_HOOKS / "finalize.py",
+                     json.dumps({"transcript_path": str(transcript)}), env)
+    assert proc.returncode == 0, proc.stderr
+    posts = [r for r in recorder.records if r["path"] == "/internal/result"]
+    assert len(posts) == 1
+    arts = {a["name"]: a for a in posts[0]["body"]["artifacts"]}
+    assert "agent_transcript.jsonl" in arts
+    assert arts["agent_transcript.jsonl"]["kind"] == "log"
+    assert arts["agent_transcript.jsonl"]["b64"]
 
 
 def test_hook_swallows_unreachable_runner():

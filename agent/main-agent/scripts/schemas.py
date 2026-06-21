@@ -65,7 +65,18 @@ class ResearchPlan(BaseModel):
     base_hparams: dict                            # FROZEN, must be non-empty
     target_metric: str                            # SINGLE scalar to optimize
     budget_steps: int = Field(gt=0)               # per-sub-agent training budget
+    # Single source of truth for TIME (idea 3). The wall-clock a sub-agent may need to
+    # burn budget_steps on a CPU learner. The main agent derives its wait_for_children
+    # timeout from this (so it doesn't synthesize before slow children land), and it
+    # bounds the runner's synthesis barrier. Optional: omit and the agent falls back to
+    # the wait script's default. Capped at the Modal sub-agent timeout (2h).
+    wall_clock_budget_seconds: int | None = Field(default=None, gt=0)
     ideas: list[ResearchIdea]
+
+    def wait_timeout_seconds(self, default: int = 7200) -> int:
+        """The timeout the main agent should pass to wait_for_children: the explicit
+        wall-clock budget if set, else a sane default, hard-capped at Modal's 2h cap."""
+        return min(self.wall_clock_budget_seconds or default, 7200)
 
     @field_validator("goal", "env_id", "reward_fn_spec", "target_metric")
     @classmethod

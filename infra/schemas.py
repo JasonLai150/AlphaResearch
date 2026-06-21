@@ -99,11 +99,50 @@ class RunResult(BaseModel):
     status: str = "done"  # done | failed | partial
     summary: str = ""
     metrics: dict = Field(default_factory=dict)
+    idea_id: str | None = None
+    validated: bool = False
+    validation_reasoning: str = ""
+    # Contract violations found at ingress (see result_contract_violations). A
+    # success-claiming result that trips the contract is recorded but downgraded to
+    # "partial" with the reasons here, so the main agent never synthesizes on a finding
+    # that fails its own success bar.
+    contract_violations: list[str] = Field(default_factory=list)
     # Future-git seam: a sub-agent may report the diff it ran (unified patch) against a
     # base ref, so the main agent can later diff/compose interventions. Unused for now.
     patch: str | None = None
     base_ref: str | None = None
     created_at: str = Field(default_factory=_now)
+
+
+def result_contract_violations(
+    *, target_metric: str | None, status: str, validated: bool, metrics: dict
+) -> list[str]:
+    """The hard contract a sub-agent's RunResult must satisfy to count as a usable
+    finding. Pure + stdlib-shaped on purpose: the same rules are mirrored in the
+    sub-agent's stdlib Stop hook (which has no infra/ import), exactly as the dispatch
+    path duplicates ResearchPlan across agent/ and infra/.
+
+    Returns human-readable violation strings (empty == clean). Only success-claiming
+    results are checked — a 'failed'/'partial' result is allowed to be thin, because an
+    honest negative finding is valuable and shouldn't be forced to invent numbers.
+    """
+    claims_success = (status or "").lower() == "done" or validated
+    if not claims_success or not isinstance(metrics, dict):
+        return []
+    v: list[str] = []
+    if target_metric and target_metric not in metrics:
+        v.append(f"target_metric {target_metric!r} absent from metrics")
+    if validated:
+        has_baseline = (
+            (target_metric and f"{target_metric}_baseline" in metrics)
+            or "delta_vs_baseline" in metrics
+        )
+        if not has_baseline:
+            v.append("validated:true but no baseline comparison in metrics")
+        n_seeds = metrics.get("n_seeds")
+        if not isinstance(n_seeds, (int, float)) or isinstance(n_seeds, bool) or n_seeds < 2:
+            v.append("validated:true but n_seeds < 2 (single-seed result is not validated)")
+    return v
 
 
 class ArtifactRef(BaseModel):
