@@ -96,3 +96,24 @@
     background-clip: padding-box;
   }
 }
+
+@layer utilities {
+  @keyframes ar-pulse-ring {
+    0%, 100% { opacity: 0.55; transform: scale(1); }
+    50% { opacity: 0.15; transform: scale(1.35); }
+  }
+  @keyframes ar-caret {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+  @keyframes ar-edge-flow {
+    to { stroke-dashoffset: -24; }
+  }
+  @keyframes ar-node-in { from { opacity: 0; transform: translate(-50%, -50%) scale(0.8); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+  .ar-node-pulse { animation: ar-pulse-ring 1.8s ease-in-out infinite; }
+  .ar-caret { animation: ar-caret 1s step-end infinite; }
+  .ar-edge-flow { stroke-dasharray: 4 8; animation: ar-edge-flow 0.7s linear infinite; }
+  @media (prefers-reduced-motion: reduce) {
+    .ar-node-pulse, .ar-caret, .ar-edge-flow { animation: none; }
+  }
+}

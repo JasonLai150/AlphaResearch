@@ -1,4 +1,5 @@
 import type { AgentStatus, TreeNode } from "@/lib/types";
+import { STATUS_HEX } from "@/lib/status-colors";
 
 /*
   A compact tidy-tree layout for the agent graph. Leaves are spread evenly left
@@ -16,14 +17,6 @@ const H_GAP = 18;
 const V_GAP = 52;
 const FONT = 13;
 
-const STATUS_HEX: Record<AgentStatus, string> = {
-  running: "#ff7a17",
-  done: "#ffffff",
-  queued: "#7d8187",
-  pending: "#7d8187",
-  failed: "#ff7b72",
-  cancelled: "#7d8187",
-};
 
 interface Placed {
   id: string;
