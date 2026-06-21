@@ -8,12 +8,14 @@
 # which the Stop hook publishes into the volume (see agent/sub-agent/CLAUDE.md).
 #
 # Inside Bash sessions the agent runs real RL training, so the ML stack is
-# baked in. EnvPool ships only Linux x86_64 manylinux wheels (Python 3.8–3.12,
-# glibc) — hence python:3.12-slim-bookworm + --platform=linux/amd64.
+# baked in. EnvPool ships Linux x86_64 manylinux wheels only — hence
+# python:3.11-slim-bookworm + --platform=linux/amd64.
 #
 # What's in this image:
 #   - Linux + libgomp1/libstdc++6 (EnvPool .so dlopen targets) + ca-certificates
-#   - Python 3.12 + pydantic + envpool + gymnasium + minigrid + numpy + matplotlib
+#   - Python 3.11 + pydantic + envpool 1.2.5 (MiniGrid + MuJoCo + Atari + classic
+#     control) + gymnasium + minigrid + numpy + matplotlib + tensorboard
+#   - torch (CPU) + vendored CleanRL PPO references (reference/cleanrl/)
 #   - Node.js 22 + @anthropic-ai/claude-code  — the entrypoint
 #   - The agent/sub-agent/ workspace
 #
@@ -36,7 +38,12 @@
 #     "import envpool; e=envpool.make('MiniGrid-Empty-8x8-v0', env_type='gymnasium', \
 #      num_envs=64); e.reset(); print(e.step(e.action_space.sample().repeat(64))[0].shape)"
 
-FROM --platform=linux/amd64 python:3.12-slim-bookworm
+# EnvPool 0.8.4 ships only linux/amd64 wheels (cp37–cp311), so the base must be
+# amd64 even on arm64 hosts. Pin it via a build ARG — a constant --platform value
+# on FROM trips the BuildKit lint (FromPlatformFlagConstDisallowed); a variable
+# does not, and the default keeps amd64 even when --platform isn't passed.
+ARG ENVPOOL_PLATFORM=linux/amd64
+FROM --platform=${ENVPOOL_PLATFORM} python:3.11-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -58,20 +65,41 @@ RUN npm install -g @anthropic-ai/claude-code@latest
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
 # ML stack baked in — the agent's Bash sessions use python3 to train, evaluate,
-# and write artifacts. envpool 0.8.4 has Linux x86_64 wheels for py 3.8–3.12.
+# and write artifacts.
 # pydantic is here because /workspace/job.json mirrors ResearchPlan and the
 # agent may want to (re-)validate inputs from Bash.
+# envpool 1.2.x is the first line to ship the MiniGrid env family (DoorKey,
+# FourRooms, BabyAI, ...) alongside its Atari / MuJoCo / classic-control envs —
+# 0.8.x had none, so MiniGrid jobs were impossible. 1.2.5 has cp311–cp314
+# manylinux x86_64 wheels; we stay on 3.11 for stability.
 RUN uv pip install --system --no-cache \
         "pydantic>=2.9" \
-        "envpool==0.8.4" \
+        "envpool==1.2.5" \
         "gymnasium==1.3.0" \
         "minigrid==3.1.0" \
         "numpy" \
-        "matplotlib"
+        "matplotlib" \
+        "tensorboard"
+
+# Torch (CPU-only wheel — no CUDA in this image) is the learner for the vendored
+# CleanRL PPO references under reference/cleanrl/. Separate RUN + the PyTorch CPU
+# index so we don't pull the multi-GB CUDA build.
+RUN uv pip install --system --no-cache \
+        --index-url https://download.pytorch.org/whl/cpu \
+        "torch"
 
 WORKDIR /workspace
 COPY agent/sub-agent/ ./
 
 RUN mkdir -p ./artifacts
+
+# Claude Code refuses --dangerously-skip-permissions when running as root. Run
+# as a non-root user instead. uid 1000 keeps a bind-mounted /workspace writable
+# on Linux hosts; the npm global install above lives in world-readable
+# /usr/local, so `claude` is still on PATH.
+RUN useradd --create-home --uid 1000 claude \
+    && chown -R claude:claude /workspace
+USER claude
+ENV HOME=/home/claude
 
 ENTRYPOINT ["claude", "--dangerously-skip-permissions"]
