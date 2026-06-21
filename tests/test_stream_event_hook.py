@@ -28,3 +28,11 @@ def test_build_event_handles_missing_fields():
     assert p["role"] == "tool_use"
     assert p["tool_name"] == ""
     assert isinstance(p["content"], str)
+
+
+def test_build_event_truncates_long_input():
+    big = {"x": "a" * 300}
+    body = stream_event.build_event(
+        {"tool_name": "T", "tool_input": big}, session_id="s", job_id="j", depth=0
+    )
+    assert len(body["payload"]["content"]) <= 200

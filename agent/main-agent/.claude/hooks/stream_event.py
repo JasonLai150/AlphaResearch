@@ -28,6 +28,8 @@ def _preview(tool: str, tool_input: dict) -> str:
 def build_event(data: dict, *, session_id: str, job_id: str, depth: int) -> dict:
     tool = str(data.get("tool_name", ""))
     tool_input = data.get("tool_input") or {}
+    # tool_response is intentionally omitted — this event represents the tool
+    # INVOCATION (the transcript "used <tool>" line), not the result.
     return {
         "session_id": session_id,
         "job_id": job_id,
