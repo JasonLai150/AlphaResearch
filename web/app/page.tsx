@@ -35,7 +35,7 @@ export default function Page() {
 
   const {
     width: sidebarWidth,
-    setWidth: setSidebarWidth,
+    nudge: nudgeSidebar,
     reset: resetSidebar,
   } = useResizablePane({ key: "ar.sidebarWidth", min: 200, max: 480, initial: 264 });
 
@@ -144,7 +144,7 @@ export default function Page() {
         </div>
         <ResizeHandle
           className="hidden md:block"
-          onResize={(dx) => setSidebarWidth(sidebarWidth + dx)}
+          onResize={nudgeSidebar}
           onReset={resetSidebar}
         />
         <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>

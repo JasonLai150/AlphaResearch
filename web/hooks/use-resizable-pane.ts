@@ -37,10 +37,23 @@ export function useResizablePane(opts: {
     [key, min, max]
   );
 
+  // Apply a relative delta. Uses the functional updater so rapid drag events
+  // never read a stale width from a closure (the absolute setWidth would).
+  const nudge = useCallback(
+    (delta: number) => {
+      setWidthState((prev) => {
+        const w = clampWidth(prev + delta, min, max);
+        localStorage.setItem(key, String(w));
+        return w;
+      });
+    },
+    [key, min, max]
+  );
+
   const reset = useCallback(() => {
     setWidthState(initial);
     localStorage.removeItem(key);
   }, [key, initial]);
 
-  return { width, setWidth, reset };
+  return { width, setWidth, nudge, reset };
 }

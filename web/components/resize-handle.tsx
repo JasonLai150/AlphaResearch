@@ -53,6 +53,7 @@ export function ResizeHandle({
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
       onDoubleClick={onReset}
       onKeyDown={(e) => {
         if (e.key === "ArrowLeft") onResize(-16);

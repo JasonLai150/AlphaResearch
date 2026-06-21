@@ -29,6 +29,7 @@ describe("useResizablePane", () => {
     expect(localStorage.getItem("sb")).toBe("480");
     act(() => result.current.reset());
     expect(result.current.width).toBe(264);
+    expect(localStorage.getItem("sb")).toBeNull();
   });
 
   it("restores a previously stored width on mount", () => {
@@ -37,5 +38,16 @@ describe("useResizablePane", () => {
       useResizablePane({ key: "sb", min: 200, max: 480, initial: 264 })
     );
     expect(result.current.width).toBe(330);
+  });
+
+  it("nudge adds a delta to the current width, clamping and persisting", () => {
+    const { result } = renderHook(() =>
+      useResizablePane({ key: "sb", min: 200, max: 480, initial: 264 })
+    );
+    act(() => result.current.nudge(50));
+    expect(result.current.width).toBe(314);
+    expect(localStorage.getItem("sb")).toBe("314");
+    act(() => result.current.nudge(1000)); // clamps at max
+    expect(result.current.width).toBe(480);
   });
 });
