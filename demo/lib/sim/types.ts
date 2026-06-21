@@ -28,6 +28,8 @@ export interface StrategySpec {
   points: CurvePoint[];
   /** Tool calls this researcher makes (for the /view tool timeline). */
   tools: string[];
+  /** Live mode: the model-written summary, cached so card + inspector agree. */
+  liveSummary?: string;
 }
 
 /** The full plan derived from a goal + seed. */

@@ -5,6 +5,7 @@ import {
   buildRunTimeline,
   jobIdFor,
 } from "@/lib/sim/timeline";
+import { claudeEnabled, runLiveFollowup, runLiveSession } from "@/lib/sim/live";
 import type { Scenario, TimedEvent } from "@/lib/sim/types";
 import type { WireSession } from "@/lib/types";
 
@@ -29,6 +30,12 @@ export interface MockSession {
   scenario: Scenario;
   turns: Turn[];
   cache: { turnCount: number; events: TimedEvent[] } | null;
+  /** Live (real-Claude) mode: prose streams from a model into `liveLog`. */
+  live: boolean;
+  /** Append-only event log written by the live producer (live mode only). */
+  liveLog: TimedEvent[];
+  /** Guards the one-shot live producer so it isn't started twice. */
+  producerStarted: boolean;
 }
 
 /*
@@ -74,6 +81,11 @@ function ensureSeeded(nowMs: number) {
       scenario: buildScenario(p.goal, seed),
       turns: [],
       cache: null,
+      // History sessions stay on the deterministic template (instant, no API
+      // calls) — they're "finished" snapshots, not new live runs.
+      live: false,
+      liveLog: [],
+      producerStarted: false,
     });
   }
 }
@@ -84,7 +96,7 @@ export function createMockSession(goal: string, userId = "demo", nowMs = Date.no
   const counter = state.counter;
   const id = `s${counter.toString(36)}${(seedFromString(goal) % 1000).toString(36)}`;
   const seed = seedFromString(goal + ":" + counter);
-  sessions.set(id, {
+  const session: MockSession = {
     id,
     userId,
     goal,
@@ -93,7 +105,17 @@ export function createMockSession(goal: string, userId = "demo", nowMs = Date.no
     scenario: buildScenario(goal, seed),
     turns: [],
     cache: null,
-  });
+    live: claudeEnabled(),
+    liveLog: [],
+    producerStarted: false,
+  };
+  sessions.set(id, session);
+  if (session.live) {
+    // Fire-and-forget: stream the run live from Claude into session.liveLog.
+    void runLiveSession(session).catch(() => {
+      /* on model error, leave whatever was produced; stream stays open */
+    });
+  }
   return { session_id: id, root_job_id: jobIdFor(id, "root") };
 }
 
@@ -114,6 +136,13 @@ export function listMockSessions(userId: string, nowMs = Date.now()): WireSessio
 export function addTurn(sid: string, userText: string, nowMs = Date.now()): boolean {
   const s = sessions.get(sid);
   if (!s || !userText.trim()) return false;
+  if (s.live) {
+    // Live mode: stream a real reply into the append-only log.
+    const turnIndex = s.turns.length + 1;
+    s.turns.push({ userText: userText.trim(), baseMs: nowMs - s.createdAtMs });
+    void runLiveFollowup(s, userText.trim(), turnIndex).catch(() => {});
+    return true;
+  }
   // Anchor the follow-up to the user's CURRENT position in the stream (now), not
   // the end of the whole initial run — otherwise a reply sent mid-run would be
   // scheduled ~70s out and look like a hung chat. Keep follow-ups ordered.
@@ -127,6 +156,9 @@ export function addTurn(sid: string, userText: string, nowMs = Date.now()): bool
 
 /** The full assembled timeline (initial run + follow-up turns). Cached. */
 export function assembleEvents(s: MockSession): TimedEvent[] {
+  // Live mode: the producer owns an append-only log with stable indices (so SSE
+  // Last-Event-ID resume works). Never sort/rebuild it.
+  if (s.live) return s.liveLog;
   if (s.cache && s.cache.turnCount === s.turns.length) return s.cache.events;
   const events = buildRunTimeline(s.scenario, s.id);
   s.turns.forEach((turn, i) => {
@@ -139,6 +171,13 @@ export function assembleEvents(s: MockSession): TimedEvent[] {
 
 /** True once the latest event's scheduled time has passed (run is terminal). */
 export function isTerminal(s: MockSession, nowMs = Date.now()): boolean {
+  if (s.live) {
+    // Live events are stamped in the past; "done" is signalled by a root
+    // status:done event, not by the clock.
+    return s.liveLog.some(
+      (e) => e.env.depth === 0 && e.env.type === "status" && e.env.payload.status === "done"
+    );
+  }
   const events = assembleEvents(s);
   const lastT = events.length ? events[events.length - 1].tMs : 0;
   return nowMs - s.createdAtMs > lastT;
