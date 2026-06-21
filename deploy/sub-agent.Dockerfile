@@ -75,6 +75,13 @@ COPY agent/sub-agent/ ./
 
 RUN mkdir -p ./artifacts
 
+# claude refuses --dangerously-skip-permissions as root → non-root user (workspace +
+# HOME writable). On Modal, sub_agent() also drops to this user via subprocess(user=).
+RUN useradd -m -u 1000 agent \
+    && chown -R agent:agent /workspace /home/agent
+USER agent
+ENV HOME=/home/agent
+
 # Headless launcher (no TTY in the sandbox): builds the one-shot prompt from the
 # dispatch record and execs `claude -p`. The Modal sub_agent function overrides this
 # entrypoint but runs the same launch.py — keep them in sync.

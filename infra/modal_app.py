@@ -96,6 +96,7 @@ def sub_agent(
     env["ALPHA_DEPTH"] = "1"
     env["ALPHA_WORKSPACE"] = "/workspace"
     env["ALPHA_DISPATCH_DIR"] = "/workspace/.dispatched"
+    env["HOME"] = "/home/agent"  # ~/.claude for the non-root user
     if internal_token:
         env["ALPHA_INTERNAL_TOKEN"] = internal_token
     if internal_runner_url:
@@ -103,8 +104,10 @@ def sub_agent(
 
     # Same headless launcher the sub-agent Dockerfile ENTRYPOINT uses (Modal overrides
     # the image entrypoint, so we invoke it explicitly): builds the prompt from the
-    # dispatch record and execs `claude -p`.
-    subprocess.run(["python3", "launch.py"], cwd="/workspace", env=env, check=False)
+    # dispatch record and execs `claude -p`. Drop to the non-root `agent` user —
+    # claude refuses --dangerously-skip-permissions as root, and Modal runs as root.
+    subprocess.run(["python3", "launch.py"], cwd="/workspace", env=env, check=False,
+                   user="agent")
 
     # Flush result.json + .done sentinel + artifacts back to the volume so the
     # runner's reconcile loop can read them.

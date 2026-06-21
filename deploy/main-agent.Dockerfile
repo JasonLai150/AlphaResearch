@@ -57,9 +57,13 @@ RUN uv pip install --system --no-cache "pydantic>=2.9"
 WORKDIR /workspace
 COPY agent/main-agent/ ./
 
-# Pre-create dirs the agent + runner write into, so first writes don't trip on
-# missing-parent.
-RUN mkdir -p ./.dispatched ./meta-planning
+# `claude --dangerously-skip-permissions` refuses to run as root → run as a non-root
+# user. The workspace + the user's HOME (~/.claude lives there) must be writable.
+RUN mkdir -p ./.dispatched ./meta-planning \
+    && useradd -m -u 1000 agent \
+    && chown -R agent:agent /workspace /home/agent
+USER agent
+ENV HOME=/home/agent
 
 # Headless launcher: Cloud Run Jobs have no TTY, so we can't use the interactive
 # `claude` REPL. launch.py fetches the goal from GET /internal/bootstrap and execs

@@ -46,9 +46,9 @@ See `docs/backend-mvp-notes.md` for the full SEV-fix map + the one remaining gap
 ## Path to v1 e2e — two PRs (see `v1-rollout.md` for full detail)
 Found: agents spawn but **idle** (interactive `claude`, no goal in container); and the
 Modal volume is broken **both** directions (dispatch out + result back), not just return.
-- [ ] **PR1 `feat/headless-agents`** — `GET /internal/bootstrap` (goal+mode) · entrypoint
-      wrappers running `claude -p` · Dockerfile/modal entrypoints · CLAUDE.md mode gate.
-      Designed for the conversational-goal future (bootstrap returns `mode`).
+- [x] **PR1 `feat/headless-agents`** — `GET /internal/bootstrap` (goal+mode) · `claude -p`
+      launchers · non-root `agent` user (claude blocks --dangerously-skip-permissions as root).
+      **Verified live:** main agent boots headless, fetches goal, dispatches 3 sub-agents.
 - [ ] **PR2 `feat/two-way-push`** — dispatch record as Modal arg · `POST /internal/result`
       (base64 artifacts → GCS) · reconcile reads Redis · retire the Modal Volume.
 - [~] **M3/M4 round-trip** superseded by PR1+PR2 (the volume bridge is removed, not hydrated).
