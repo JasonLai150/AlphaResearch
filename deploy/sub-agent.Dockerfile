@@ -75,14 +75,13 @@ COPY agent/sub-agent/ ./
 
 RUN mkdir -p ./artifacts
 
-# claude refuses --dangerously-skip-permissions as root → non-root user (workspace +
-# HOME writable). On Modal, sub_agent() also drops to this user via subprocess(user=).
+# claude refuses --dangerously-skip-permissions as root → create a non-root `agent`
+# user (workspace + HOME writable). We do NOT set `USER agent` here: this image runs on
+# Modal, whose harness runs as root and would break under a non-root USER; the sub_agent
+# function drops to `agent` for the claude subprocess via subprocess(user="agent").
 RUN useradd -m -u 1000 agent \
     && chown -R agent:agent /workspace /home/agent
-USER agent
-ENV HOME=/home/agent
 
-# Headless launcher (no TTY in the sandbox): builds the one-shot prompt from the
-# dispatch record and execs `claude -p`. The Modal sub_agent function overrides this
-# entrypoint but runs the same launch.py — keep them in sync.
-ENTRYPOINT ["python3", "launch.py"]
+# No ENTRYPOINT: Modal invokes launch.py from the sub_agent function with the right env
+# (ALPHA_JOB_ID etc.). An ENTRYPOINT here fires at container boot with no args and crashes
+# (see infra/modal_app.py .entrypoint([])). launch.py is the launcher; the function runs it.

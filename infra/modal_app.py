@@ -43,9 +43,13 @@ image = (
 
 # Sub-agent image: the Claude Code CLI + RL stack + the agent/sub-agent workspace,
 # built from the same Dockerfile the Cloud Run / docker paths use.
+# .entrypoint([]) clears the image's ENTRYPOINT: Modal runs from_dockerfile images via
+# the inherited ENTRYPOINT, which would fire launch.py at container boot (before the
+# function args exist) and crash with "missing ALPHA_JOB_ID". The sub_agent function
+# invokes launch.py itself with the right env.
 sub_image = modal.Image.from_dockerfile(
     "deploy/sub-agent.Dockerfile", context_dir=".", force_build=False,
-)
+).entrypoint([])
 
 secret = modal.Secret.from_name("alpha-secrets")  # REDIS_URL, ANTHROPIC_API_KEY, GCS creds
 app = modal.App(APP_NAME)
