@@ -31,6 +31,13 @@ pure Redis Stream tailer.
 - **Not yet proven on real cloud:** the sub-agent result round-trip. Cloud Run can't mount a Modal
   Volume, so `reload_volume()` must hydrate via the Modal SDK (or sub-agents push results) before a
   live run completes — see `docs/backend-mvp-notes.md`. Real RL training + web demo still pending.
+- **Web app — live + authed** (`web/`, branch `feat/dashboard-ui`): 3-pane console (Tailwind v4 +
+  shadcn/ui + Lucide, `DESIGN.md`) wired to the live SSE stream (event-sourced reducer →
+  tree/transcript/recharts metrics/artifacts), multi-turn chat (`POST /sessions/{id}/messages`),
+  session history, resume/reconnect. Optional Clerk auth (app + API, graceful keyless dev fallback).
+  Local dev runs end-to-end with no cloud via `ALPHA_LOCAL_SIM` (`runner/local_sim.py`). M6 ✅.
+- **Frontend-complete pass** (`feat/frontend-complete`): toast + full error/empty/loading UX,
+  pending-timeout, responsive drawers, real ContextBar, Vitest+RTL tests, eslint/prettier, deploy docs.
 
 ## Competence direction (post-MVP)
 Make the director more competent on 3 axes — sharper single session, cross-chat continuity,

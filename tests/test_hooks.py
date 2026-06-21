@@ -124,7 +124,9 @@ def test_main_agent_stream_event_posts(recorder):
     assert body["job_id"] == "j_1"
     assert body["depth"] == 0
     assert body["type"] == "log"
-    assert "Bash" in body["payload"]["tool"]
+    assert body["payload"]["role"] == "tool_use"
+    assert body["payload"]["tool_name"] == "Bash"
+    assert "Bash" in body["payload"]["content"]
 
 
 def test_sub_agent_stream_event_tags_depth(recorder):

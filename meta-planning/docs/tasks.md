@@ -60,7 +60,9 @@ Modal volume is broken **both** directions (dispatch out + result back), not jus
       env vars + W3C `TRACEPARENT` into both agent spawns; deploy scripts carry static config. 96 tests pass.
 - [ ] **M5 — real RL training**: `run_experiment_real` still delegates to the synthetic stub; add a
       short minigrid+PPO loop (lazy torch/sb3) and the deps to the Modal image.
-- [ ] **M6 — web UI live demo**: plot `JobNode.rewards` (recharts), real parent/child tree via
-      `parentJobId`, EventSource `last_event_id` resume + reconnect.
+- [x] **M6 — web UI live demo**: recharts `JobNode.rewards`, real parent/child tree via
+      `parentJobId`, `Last-Event-ID` resume + reconnect. Frontend-complete pass on
+      `feat/frontend-complete`: toast + full error/empty/loading UX, responsive drawers,
+      Vitest+RTL suite (37) + backend resume/error tests, eslint/prettier. Live e2e re-verify pending (Redis was down).
 - [ ] **M7 — execute the deploy**: run `gcp_bootstrap.sh` + `deploy_cloudrun.sh` + `modal deploy`,
       then verify Redis Cloud reachable from Cloud Run egress + a `/healthz` smoke.

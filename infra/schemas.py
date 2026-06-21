@@ -39,6 +39,8 @@ class EventType(StrEnum):
     spawn = "spawn"
     artifact = "artifact"
     summary = "summary"
+    error = "error"
+    token = "token"  # streaming assistant text delta (typewriter UI)
 
 
 class Session(BaseModel):

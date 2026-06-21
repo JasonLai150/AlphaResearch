@@ -3,9 +3,9 @@
 
 Cloud Run Jobs have no TTY/stdin, so the interactive `claude` REPL can't self-drive.
 This launcher fetches the session goal from the runner (GET /internal/bootstrap,
-token->session) and execs `claude -p` (non-interactive print mode). The agent's
-CLAUDE.md + .claude/settings.json (skills, hooks) drive everything after that;
-telemetry flows back via the hooks, not this process's stdout.
+token->session) and spawns `claude -p` (non-interactive print mode) in stream-json
+mode, piping its stdout through the stream relay so assistant text deltas reach
+the runner live.
 
 stdlib-only by design (the image excludes infra/ and purges curl). Mirrors
 .claude/hooks/_push.py.
@@ -21,6 +21,13 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
+
+_HOOKS = str(Path(__file__).resolve().parent / ".claude" / "hooks")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, _HOOKS)
+from _push import push  # noqa: E402  (stdlib-only HTTP helper, shared with hooks)
+from stream_relay import relay  # noqa: E402
 
 _BOOTSTRAP_ATTEMPTS = 5
 
@@ -89,6 +96,23 @@ def _prompt(ctx: dict) -> str:
     )
 
 
+def _build_argv(prompt: str, model: str) -> list[str]:
+    """claude in streaming print mode: emit per-token JSON so the relay can
+    forward assistant text live. --verbose is required with -p + stream-json."""
+    return [
+        "claude",
+        "-p",
+        prompt,
+        "--model",
+        model,
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--include-partial-messages",
+        "--dangerously-skip-permissions",
+    ]
+
+
 def _smoke() -> None:
     """Real `claude` round-trip inside the deployed container. Exits 0 only if the
     Claude Code CLI is installed, ANTHROPIC_API_KEY is mounted+valid, and network
@@ -137,11 +161,32 @@ def main() -> None:
         raise SystemExit("[launch] bootstrap returned an empty goal")
     print(f"[launch] mode={ctx.get('mode')} goal={goal[:120]!r}", file=sys.stderr)
 
-    # No interactivity flag: `claude -p` is inherently headless (no stdin for the
-    # model), and the bootstrap prompt already states there is no human to answer
-    # questions. The agent decides for itself whether to ask vs. assume.
-    argv = ["claude", "-p", _prompt(ctx), "--model", model, "--dangerously-skip-permissions"]
-    os.execvp("claude", argv)  # replace this process; claude inherits cwd=/workspace + env
+    os.environ["ALPHA_NONINTERACTIVE"] = "1"  # CLAUDE.md gates its clarifying-Q step on this
+
+    session_id = os.environ.get("ALPHA_SESSION_ID", "")
+    job_id = os.environ.get("ALPHA_JOB_ID", "")
+    try:
+        depth = int(os.environ.get("ALPHA_DEPTH") or 0)
+    except ValueError:
+        depth = 0
+
+    # Spawn claude (don't exec) so we can tail its stream-json stdout and relay
+    # assistant text deltas to the runner. stderr inherits -> Cloud Run logs.
+    # _prompt takes the full bootstrap ctx (it's autonomous-loop aware via ctx["loop"]).
+    argv = _build_argv(_prompt(ctx), model)
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, text=True, bufsize=1)
+    relay_exc: Exception | None = None
+    try:
+        relay(proc.stdout, push, session_id=session_id, job_id=job_id, depth=depth)
+    except Exception as exc:  # noqa: BLE001 — never lose claude's exit code to a relay error
+        relay_exc = exc
+    finally:
+        if proc.stdout is not None:
+            proc.stdout.close()
+        rc = proc.wait()
+    if relay_exc is not None:
+        print(f"[launch] relay error: {relay_exc!r}", file=sys.stderr)
+    sys.exit(rc)
 
 
 if __name__ == "__main__":

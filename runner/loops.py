@@ -181,8 +181,10 @@ async def _consume_dispatches_once() -> None:
                 continue
             txn.set_tag("alpha.sandbox_id", sandbox_id)
             await store.mark_job_running(jid, sandbox_id, "modal")  # atomic stamp (see above)
+            p = job.params or {}
             await _emit(job.session_id, jid, job.depth, EventType.spawn,
-                        {"sandbox": sandbox_id, "kind": job.kind.value})
+                        {"sandbox": sandbox_id, "kind": job.kind.value,
+                         "goal": p.get("goal"), "strategy": p.get("strategy")})
             await r.xdel(store.DISPATCH_QUEUE, entry_id)  # SEV-1
 
 

@@ -12,6 +12,11 @@
 # Safe to re-run. Reads PROJECT/REGION/... from env or uses the defaults below.
 set -euo pipefail
 
+# Pull non-secret identifiers (WANDB_ENTITY, BROWSERBASE_*_ID, OTEL_*) from .env when
+# present, same as scripts/deploy_modal.sh. Harmless for the GCP values below — the
+# script sets/derives those explicitly. Skipped in CI where .env is absent.
+if [ -f .env ]; then set -a; source .env; set +a; fi
+
 PROJECT="${PROJECT:-alpharesearch-500100}"
 REGION="${REGION:-us-central1}"
 REPO="${REPO:-alpha}"
@@ -22,6 +27,13 @@ AGENT_JOB="${AGENT_JOB:-alpha-main-agent}"
 ORCH_SA="${ORCH_SA:-alpha-orchestrator@${PROJECT}.iam.gserviceaccount.com}"
 AGENT_SA="${AGENT_SA:-alpha-main-agent@${PROJECT}.iam.gserviceaccount.com}"
 TAG="${TAG:-v$(date +%Y%m%d-%H%M%S)}"
+# wandb + Browserbase identifiers the runner injects into each Modal sub_agent at spawn
+# (runner/modal_client.py reads these off settings) so a sub-agent can screenshot its OWN
+# live wandb run. Non-secret; export them (or source .env) before deploying. Empty ones
+# are skipped below so we never set blank env vars on the service.
+WANDB_ENTITY="${WANDB_ENTITY:-${ALPHA_WANDB_ENTITY:-}}"
+BROWSERBASE_CONTEXT_ID="${BROWSERBASE_CONTEXT_ID:-${ALPHA_BROWSERBASE_CONTEXT_ID:-}}"
+BROWSERBASE_PROJECT_ID="${BROWSERBASE_PROJECT_ID:-${ALPHA_BROWSERBASE_PROJECT_ID:-}}"
 REGISTRY="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}"
 IMAGE_API="${REGISTRY}/api:${TAG}"
 IMAGE_AGENT="${REGISTRY}/main-agent:${TAG}"
@@ -98,6 +110,20 @@ if [ -n "${OTEL_EXPORTER_OTLP_ENDPOINT:-}" ]; then
   OTEL_ENV_VARS=",ALPHA_AGENT_OTEL_ENABLED=true"
   OTEL_ENV_VARS="${OTEL_ENV_VARS},OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT}"
 fi
+
+# Append the sub-agent identifiers only when set (UUIDs/slugs — no '=' or ',', so they're
+# safe in the comma-delimited --set-env-vars). `if` blocks, not `[ ] && …`, so a missing
+# value doesn't trip `set -e`.
+SUBAGENT_ENV_VARS=""
+if [ -n "${WANDB_ENTITY}" ]; then
+  SUBAGENT_ENV_VARS="${SUBAGENT_ENV_VARS},ALPHA_WANDB_ENTITY=${WANDB_ENTITY}"
+fi
+if [ -n "${BROWSERBASE_CONTEXT_ID}" ]; then
+  SUBAGENT_ENV_VARS="${SUBAGENT_ENV_VARS},ALPHA_BROWSERBASE_CONTEXT_ID=${BROWSERBASE_CONTEXT_ID}"
+fi
+if [ -n "${BROWSERBASE_PROJECT_ID}" ]; then
+  SUBAGENT_ENV_VARS="${SUBAGENT_ENV_VARS},ALPHA_BROWSERBASE_PROJECT_ID=${BROWSERBASE_PROJECT_ID}"
+fi
 gcloud run deploy "${SERVICE}" --image="${IMAGE_API}" --region="${REGION}" --project="${PROJECT}" \
     --service-account="${ORCH_SA}" \
     --allow-unauthenticated --min-instances=1 --max-instances=1 --no-cpu-throttling \
@@ -110,7 +136,7 @@ MODAL_TOKEN_SECRET=modal-token-secret:latest,\
 SENTRY_DSN=sentry-dsn:latest" \
     --set-env-vars="ALPHA_GCS_BUCKET=${BUCKET},ALPHA_MODAL_APP_NAME=alpharesearch,\
 ALPHA_GCP_PROJECT=${PROJECT},ALPHA_GCP_REGION=${REGION},ALPHA_MAIN_AGENT_JOB_NAME=${AGENT_JOB},\
-ALPHA_RUNNER_ENABLED=true,SENTRY_ENVIRONMENT=cloud,SENTRY_TRACES_SAMPLE_RATE=1.0${OTEL_ENV_VARS}"
+ALPHA_RUNNER_ENABLED=true,SENTRY_ENVIRONMENT=cloud,SENTRY_TRACES_SAMPLE_RATE=1.0${OTEL_ENV_VARS}${SUBAGENT_ENV_VARS}"
 
 # OTEL_EXPORTER_OTLP_HEADERS carries the Sentry ingest key (e.g. "sentry-key=<public>").
 # Its value contains '=', so set it on its own with a custom delimiter to avoid the
