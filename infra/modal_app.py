@@ -43,9 +43,13 @@ image = (
 
 # Sub-agent image: the Claude Code CLI + RL stack + the agent/sub-agent workspace,
 # built from the same Dockerfile the Cloud Run / docker paths use.
+# .entrypoint([]) clears the image's ENTRYPOINT: Modal runs from_dockerfile images via
+# the inherited ENTRYPOINT, which would fire launch.py at container boot (before the
+# function args exist) and crash with "missing ALPHA_JOB_ID". The sub_agent function
+# invokes launch.py itself with the right env.
 sub_image = modal.Image.from_dockerfile(
     "deploy/sub-agent.Dockerfile", context_dir=".", force_build=False,
-)
+).entrypoint([])
 
 secret = modal.Secret.from_name("alpha-secrets")  # REDIS_URL, ANTHROPIC_API_KEY, GCS creds
 app = modal.App(APP_NAME)
@@ -87,26 +91,47 @@ def sub_agent(
     session_id: str,
     internal_token: str = "",
     internal_runner_url: str = "",
+    dispatch_record: str = "",
 ) -> None:
-    """Boot the Claude Code sub-agent. The per-session volume is mounted at
-    /workspace/.dispatched by the runner at spawn time."""
+    """Boot the Claude Code sub-agent.
+
+    PR2: no shared volume. The dispatch record arrives as ``dispatch_record`` (JSON) and
+    is written into this container's own /workspace/.dispatched/<jid>.json so the agent
+    reads its plan/idea exactly as its CLAUDE.md describes. Results + artifacts are pushed
+    back over HTTP (the finalize hook POSTs /internal/result) — nothing flows via Modal."""
+    import json as _json
+    import os as _os
+    import shutil as _shutil
+
+    _AGENT = "agent"  # non-root user baked into the image (claude blocks root)
+    disp = "/workspace/.dispatched"
+    _os.makedirs(disp, exist_ok=True)
+    if dispatch_record:
+        # validate it's JSON, then write the record the sub-agent reads on boot.
+        _json.loads(dispatch_record)
+        with open(_os.path.join(disp, f"{job_id}.json"), "w") as f:
+            f.write(dispatch_record)
+    # The function runs as root on Modal; hand the dispatch dir to the agent user so the
+    # non-root sub-agent can read its record and write artifacts under it.
+    for root_dir, _dirs, files in _os.walk(disp):
+        _shutil.chown(root_dir, _AGENT, _AGENT)
+        for n in files:
+            _shutil.chown(_os.path.join(root_dir, n), _AGENT, _AGENT)
+
     env = os.environ.copy()
     env["ALPHA_JOB_ID"] = job_id
     env["ALPHA_SESSION_ID"] = session_id
     env["ALPHA_DEPTH"] = "1"
     env["ALPHA_WORKSPACE"] = "/workspace"
-    env["ALPHA_DISPATCH_DIR"] = "/workspace/.dispatched"
+    env["ALPHA_DISPATCH_DIR"] = disp
+    env["HOME"] = "/home/agent"  # ~/.claude for the non-root user
     if internal_token:
         env["ALPHA_INTERNAL_TOKEN"] = internal_token
     if internal_runner_url:
         env["ALPHA_INTERNAL_RUNNER_URL"] = internal_runner_url
 
-    subprocess.run(["claude", "--dangerously-skip-permissions"], cwd="/workspace",
-                   env=env, check=False)
-
-    # Flush result.json + .done sentinel + artifacts back to the volume so the
-    # runner's reconcile loop can read them.
-    try:
-        modal.Volume.from_name(f"alpha-session-{session_id}").commit()
-    except Exception:
-        pass
+    # Same headless launcher the sub-agent Dockerfile ENTRYPOINT uses (Modal overrides
+    # the image entrypoint, so we invoke it explicitly): builds the prompt from the
+    # dispatch record and execs `claude -p`, as the non-root `agent` user.
+    subprocess.run(["python3", "launch.py"], cwd="/workspace", env=env, check=False,
+                   user=_AGENT)

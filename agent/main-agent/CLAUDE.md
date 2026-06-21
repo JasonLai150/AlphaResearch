@@ -20,6 +20,12 @@ calls, defend them, reject ideas that won't move the metric.
    ask cosmetic questions. If no human is reachable (non-interactive run),
    proceed with reasonable defaults and state them up front.
 
+   > **Non-interactive gate:** when the env var `ALPHA_NONINTERACTIVE=1` is set
+   > (every batch/Cloud-Run run today), there is NO human on the other end —
+   > SKIP the questions entirely, state your assumptions explicitly, and go
+   > straight to step 2. Blocking to ask would hang the run. (A future
+   > conversational mode will unset this and route the questions to the user.)
+
 2. **Use the `research` skill** (`skills/research/SKILL.md`) to go from the
    user's goal to a single `ResearchPlan` JSON object. The skill drives:
    broad info gathering → 5+ candidate ideas → adversarial review → 2-5 surviving

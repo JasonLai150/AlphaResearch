@@ -1,17 +1,16 @@
-"""Runner loops: spawn gating (SEV-1), reconcile re-fetch (SEV-12), result
-sentinel handling (SEV-7), orphan cancellation (SEV-8), terminal-session
-cleanup (SEV-6). Modal + Cloud Run spawns/polls are mocked."""
+"""Runner loops: spawn gating (SEV-1), reconcile re-fetch (SEV-12), result handling
+(PR2: read the pushed RunResult from Redis), orphan cancellation (SEV-8),
+terminal-session cleanup (SEV-6). Modal + Cloud Run spawns/polls are mocked."""
 
 from __future__ import annotations
 
-import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from infra import store
-from infra.schemas import Job, JobKind, JobStatus
-from runner import loops, modal_client
+from infra.schemas import Job, JobKind, JobStatus, RunResult
+from runner import loops
 
 pytestmark = pytest.mark.asyncio
 
@@ -71,7 +70,8 @@ async def test_session_loop_keeps_entry_on_spawn_failure(fake_redis):
 
 # ---- dispatch_loop -----------------------------------------------------
 
-async def test_dispatch_loop_spawns_sub_agent_and_writes_record(fake_redis):
+async def test_dispatch_loop_spawns_sub_agent_with_record(fake_redis):
+    """PR2: the dispatch record is passed to spawn (Modal call arg), not written to a volume."""
     await _seed_session()
     await store.create_job(Job(id="j_c", session_id="s_a", parent_job_id="j_root", depth=1,
                                kind=JobKind.agent, status=JobStatus.queued,
@@ -79,12 +79,12 @@ async def test_dispatch_loop_spawns_sub_agent_and_writes_record(fake_redis):
                                        "strategy": "exploration: x"}))
     await store.enqueue_dispatch("j_c")
     spawn = AsyncMock(return_value="sb_c")
-    wrec = MagicMock()
-    with patch("runner.loops.spawn_sub_agent", spawn), \
-         patch("runner.loops.write_dispatch_record", wrec):
+    with patch("runner.loops.spawn_sub_agent", spawn):
         await loops._consume_dispatches_once()
-    spawn.assert_awaited_once_with("j_c", "s_a")
-    wrec.assert_called_once()  # dispatch record written into the volume before spawn
+    spawn.assert_awaited_once()
+    args = spawn.await_args.args
+    assert args[0] == "j_c" and args[1] == "s_a"
+    assert args[2]["idea_id"] == "i" and args[2]["plan"] == {"id": "p"}  # record passed through
     j = await store.get_job("j_c")
     assert j.sandbox_id == "sb_c" and j.status == JobStatus.running and j.backend == "modal"
 
@@ -95,64 +95,51 @@ async def test_reconcile_marks_failed_on_dead_sandbox(fake_redis):
     await _seed_session()
     await store.create_job(Job(id="j_1", session_id="s_a", depth=1, status=JobStatus.running,
                                sandbox_id="sb_1", backend="modal"))
-    with patch("runner.loops.poll_modal_call", AsyncMock(return_value="failed")), \
-         patch("runner.loops.delete_session_volume", AsyncMock()):
+    with patch("runner.loops.poll_modal_call", AsyncMock(return_value="failed")):
         await loops._reconcile_once()
     assert (await store.get_job("j_1")).status == JobStatus.failed
     run = await store.get_run("j_1")
     assert run is not None and run.status == "failed"
 
 
-async def test_reconcile_done_reads_result_and_uploads(fake_redis):
+async def test_reconcile_done_reads_pushed_result(fake_redis):
+    """PR2: the sub-agent already POSTed its RunResult to Redis; reconcile reads it."""
     await _seed_session()
     await store.create_job(Job(id="j_c", session_id="s_a", parent_job_id="j_root", depth=1,
                                status=JobStatus.running, sandbox_id="sb_c", backend="modal"))
-    rp, _ = modal_client.results_for("s_a", "j_c")
-    rp.parent.mkdir(parents=True, exist_ok=True)
-    rp.write_text(json.dumps({"job_id": "j_c", "status": "done", "summary": "ok",
-                              "metrics": {"r": 0.5}}))
-    modal_client.result_done_sentinel("s_a", "j_c").write_text("done")
-    with patch("runner.loops.poll_modal_call", AsyncMock(return_value="done")), \
-         patch("runner.loops.reload_volume", AsyncMock()), \
-         patch("runner.loops.upload_artifacts", AsyncMock(return_value=[])), \
-         patch("runner.loops.delete_session_volume", AsyncMock()):
+    await store.write_run(RunResult(job_id="j_c", status="done", summary="ok",
+                                    metrics={"r": 0.5}))
+    with patch("runner.loops.poll_modal_call", AsyncMock(return_value="done")):
         await loops._reconcile_once()
     assert (await store.get_job("j_c")).status == JobStatus.done
     run = await store.get_run("j_c")
     assert run.summary == "ok" and run.metrics["r"] == 0.5
 
 
-async def test_reconcile_done_without_sentinel_fails(fake_redis):
-    """SEV-7: completed but no .done sentinel -> failed, not a silent empty done."""
+async def test_reconcile_done_without_pushed_result_fails(fake_redis):
+    """PR2: Modal call done but no RunResult in Redis -> the sub-agent exited without
+    posting (crash / failed hook) -> failed, not a silent empty done."""
     await _seed_session()
     await store.create_job(Job(id="j_c", session_id="s_a", parent_job_id="j_root", depth=1,
                                status=JobStatus.running, sandbox_id="sb_c", backend="modal"))
-    rp, _ = modal_client.results_for("s_a", "j_c")
-    rp.parent.mkdir(parents=True, exist_ok=True)
-    rp.write_text(json.dumps({"summary": "ok"}))  # result present, NO sentinel
-    with patch("runner.loops.poll_modal_call", AsyncMock(return_value="done")), \
-         patch("runner.loops.reload_volume", AsyncMock()), \
-         patch("runner.loops.upload_artifacts", AsyncMock(return_value=[])), \
-         patch("runner.loops.delete_session_volume", AsyncMock()):
+    with patch("runner.loops.poll_modal_call", AsyncMock(return_value="done")):
         await loops._reconcile_once()
     assert (await store.get_job("j_c")).status == JobStatus.failed
 
 
-async def test_reconcile_done_with_invalid_json_fails(fake_redis):
-    """SEV-7: sentinel present but JSON torn -> failed."""
+async def test_reconcile_honors_subagent_self_reported_failure(fake_redis):
+    """A sub-agent that pushed status='failed' must be recorded failed, not masked done."""
     await _seed_session()
     await store.create_job(Job(id="j_c", session_id="s_a", parent_job_id="j_root", depth=1,
                                status=JobStatus.running, sandbox_id="sb_c", backend="modal"))
-    rp, _ = modal_client.results_for("s_a", "j_c")
-    rp.parent.mkdir(parents=True, exist_ok=True)
-    rp.write_text("{not valid json")
-    modal_client.result_done_sentinel("s_a", "j_c").write_text("done")
-    with patch("runner.loops.poll_modal_call", AsyncMock(return_value="done")), \
-         patch("runner.loops.reload_volume", AsyncMock()), \
-         patch("runner.loops.upload_artifacts", AsyncMock(return_value=[])), \
-         patch("runner.loops.delete_session_volume", AsyncMock()):
+    await store.write_run(RunResult(job_id="j_c", status="failed",
+                                    summary="diverged; no improvement"))
+    with patch("runner.loops.poll_modal_call", AsyncMock(return_value="done")):
         await loops._reconcile_once()
-    assert (await store.get_job("j_c")).status == JobStatus.failed
+    j = await store.get_job("j_c")
+    assert j.status == JobStatus.failed
+    run = await store.get_run("j_c")
+    assert run.status == "failed" and "diverged" in run.summary
 
 
 # ---- reconcile: SEV-8 orphan cancellation ------------------------------
@@ -166,10 +153,7 @@ async def test_reconcile_parent_terminal_cancels_children(fake_redis):
     cancel = AsyncMock()
     with patch("runner.loops.poll_cloud_run_exec", AsyncMock(return_value="failed")), \
          patch("runner.loops.poll_modal_call", AsyncMock(return_value="running")), \
-         patch("runner.loops.cancel_modal_call", cancel), \
-         patch("runner.loops.reload_volume", AsyncMock()), \
-         patch("runner.loops.upload_artifacts", AsyncMock(return_value=[])), \
-         patch("runner.loops.delete_session_volume", AsyncMock()):
+         patch("runner.loops.cancel_modal_call", cancel):
         await loops._reconcile_once()
     assert (await store.get_job("j_root")).status == JobStatus.failed
     assert (await store.get_job("j_c")).status == JobStatus.cancelled
@@ -187,25 +171,21 @@ async def test_reconcile_skips_job_that_transitioned(fake_redis):
     await store.set_job_status("j_1", JobStatus.done)          # actual status -> done
     await store.get_redis().sadd("jobs:by_status:running", "j_1")  # stale index membership
     poll = AsyncMock(return_value="failed")
-    with patch("runner.loops.poll_modal_call", poll), \
-         patch("runner.loops.delete_session_volume", AsyncMock()):
+    with patch("runner.loops.poll_modal_call", poll):
         await loops._reconcile_once()
     poll.assert_not_awaited()
     assert (await store.get_job("j_1")).status == JobStatus.done  # untouched
 
 
-# ---- SEV-6 terminal-session cleanup ------------------------------------
+# ---- SEV-6 terminal-session cleanup (PR2: token revoke; no volume to reclaim) ----
 
 async def test_cleanup_terminal_session_once(fake_redis, monkeypatch):
     monkeypatch.setattr(loops, "CLEANUP_GRACE_SECONDS", 0)  # skip the grace window in test
     await _seed_session()
     await _seed_root(status=JobStatus.done, sandbox_id="exec_1", backend="cloud_run_job")
     tok = await store.mint_agent_token("s_a")
-    delvol = AsyncMock()
-    with patch("runner.loops.delete_session_volume", delvol):
-        await loops._cleanup_terminal_sessions()
-        await loops._cleanup_terminal_sessions()  # second pass: already cleaned
-    delvol.assert_awaited_once_with("s_a")
+    await loops._cleanup_terminal_sessions()
+    await loops._cleanup_terminal_sessions()  # second pass: already cleaned (no error)
     assert await store.resolve_agent_token(tok) is None  # token revoked
 
 
@@ -214,38 +194,14 @@ async def test_cleanup_respects_grace_window(fake_redis, monkeypatch):
     monkeypatch.setattr(loops, "CLEANUP_GRACE_SECONDS", 9999)
     await _seed_session()
     await _seed_root(status=JobStatus.done, sandbox_id="exec_1", backend="cloud_run_job")
-    delvol = AsyncMock()
-    with patch("runner.loops.delete_session_volume", delvol):
-        await loops._cleanup_terminal_sessions()
-    delvol.assert_not_awaited()  # within grace -> not yet
-
-
-async def test_reconcile_honors_subagent_self_reported_failure(fake_redis):
-    """SEV: a sub-agent that exits cleanly but reports status='failed' must be
-    recorded as failed, not masked as a successful done."""
-    await _seed_session()
-    await store.create_job(Job(id="j_c", session_id="s_a", parent_job_id="j_root", depth=1,
-                               status=JobStatus.running, sandbox_id="sb_c", backend="modal"))
-    rp, _ = modal_client.results_for("s_a", "j_c")
-    rp.parent.mkdir(parents=True, exist_ok=True)
-    rp.write_text(json.dumps({"job_id": "j_c", "status": "failed",
-                              "summary": "diverged; no improvement", "metrics": {}}))
-    modal_client.result_done_sentinel("s_a", "j_c").write_text("done")
-    with patch("runner.loops.poll_modal_call", AsyncMock(return_value="done")), \
-         patch("runner.loops.reload_volume", AsyncMock()), \
-         patch("runner.loops.upload_artifacts", AsyncMock(return_value=[])), \
-         patch("runner.loops.delete_session_volume", AsyncMock()):
-        await loops._reconcile_once()
-    j = await store.get_job("j_c")
-    assert j.status == JobStatus.failed
-    run = await store.get_run("j_c")
-    assert run.status == "failed" and "diverged" in run.summary
+    tok = await store.mint_agent_token("s_a")
+    await loops._cleanup_terminal_sessions()
+    assert await store.resolve_agent_token(tok) == "s_a"  # within grace -> not revoked yet
 
 
 async def test_cleanup_skips_session_with_running_job(fake_redis):
     await _seed_session()
     await _seed_root(status=JobStatus.running, sandbox_id="exec_1", backend="cloud_run_job")
-    delvol = AsyncMock()
-    with patch("runner.loops.delete_session_volume", delvol):
-        await loops._cleanup_terminal_sessions()
-    delvol.assert_not_awaited()
+    tok = await store.mint_agent_token("s_a")
+    await loops._cleanup_terminal_sessions()
+    assert await store.resolve_agent_token(tok) == "s_a"  # not terminal -> untouched

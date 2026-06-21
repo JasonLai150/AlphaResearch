@@ -45,6 +45,11 @@ class Session(BaseModel):
     id: str
     user_id: str
     goal: str
+    # "oneshot": derive the plan from `goal` alone and dispatch (PR1). "conversational":
+    # the goal is refined over user<->main-agent turns before dispatch (future). The
+    # main agent reads this via GET /internal/bootstrap and gates its clarifying-questions
+    # step on it.
+    mode: str = "oneshot"
     status: str = "running"
     created_at: str = Field(default_factory=_now)
 
@@ -94,6 +99,10 @@ class RunResult(BaseModel):
     status: str = "done"  # done | failed | partial
     summary: str = ""
     metrics: dict = Field(default_factory=dict)
+    # Future-git seam: a sub-agent may report the diff it ran (unified patch) against a
+    # base ref, so the main agent can later diff/compose interventions. Unused for now.
+    patch: str | None = None
+    base_ref: str | None = None
     created_at: str = Field(default_factory=_now)
 
 

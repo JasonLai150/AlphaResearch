@@ -42,7 +42,10 @@ gcloud storage buckets describe "gs://${BUCKET}" --project="${PROJECT}" >/dev/nu
     gcloud storage buckets create "gs://${BUCKET}" --project="${PROJECT}" --location="${REGION}"
 
 echo "==> Check required secrets exist (create once, by hand)"
-for s in anthropic-api-key alpha-redis-url gcs-sa-key; do
+# modal-token-{id,secret}: the runner spawns sub-agent Modal Functions from Cloud Run,
+# so it needs Modal API creds (no ~/.modal.toml in the container). Mint with
+# `modal token new`, then push the values from ~/.modal.toml into these secrets.
+for s in anthropic-api-key alpha-redis-url gcs-sa-key modal-token-id modal-token-secret; do
     gcloud secrets describe "${s}" --project="${PROJECT}" >/dev/null 2>&1 || {
         echo "ERROR: secret '${s}' missing. Create it: gcloud secrets create ${s} --data-file=-"
         exit 1
@@ -66,7 +69,9 @@ gcloud run deploy "${SERVICE}" --image="${IMAGE_API}" --region="${REGION}" --pro
     --memory=1Gi --cpu=1 --port=8080 \
     --set-secrets="ANTHROPIC_API_KEY=anthropic-api-key:latest,\
 ALPHA_REDIS_URL=alpha-redis-url:latest,\
-GOOGLE_APPLICATION_CREDENTIALS_B64=gcs-sa-key:latest" \
+GOOGLE_APPLICATION_CREDENTIALS_B64=gcs-sa-key:latest,\
+MODAL_TOKEN_ID=modal-token-id:latest,\
+MODAL_TOKEN_SECRET=modal-token-secret:latest" \
     --set-env-vars="ALPHA_GCS_BUCKET=${BUCKET},ALPHA_MODAL_APP_NAME=alpharesearch,\
 ALPHA_GCP_PROJECT=${PROJECT},ALPHA_GCP_REGION=${REGION},ALPHA_MAIN_AGENT_JOB_NAME=${AGENT_JOB},\
 ALPHA_RUNNER_ENABLED=true"

@@ -27,21 +27,27 @@ FROM python:3.12-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    DEBIAN_FRONTEND=noninteractive
+    DEBIAN_FRONTEND=noninteractive \
+    UV_HTTP_TIMEOUT=300
 
 # Node 22 from NodeSource (Claude Code CLI requires Node >= 18). curl + gnupg
 # are needed only to add the apt repo; purge them after to keep the image lean.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Acquire::Retries + curl --retry harden the build against flaky/congested networks
+# (apt mirrors and nodesource can drop mid-pull).
+RUN apt-get -o Acquire::Retries=8 update \
+    && apt-get -o Acquire::Retries=8 install -y --no-install-recommends \
         curl ca-certificates gnupg \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
+    && curl -fsSL --retry 8 --retry-delay 2 --retry-connrefused \
+        https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get -o Acquire::Retries=8 install -y --no-install-recommends nodejs \
     && apt-get purge -y --auto-remove curl gnupg \
     && rm -rf /var/lib/apt/lists/*
 
 # Claude Code CLI = the actual entrypoint. `@latest` is intentional during P0;
 # pin once we have a known-good version (see the bundled-CLI version in
 # claude-agent-sdk for a reference: 2.1.x at the time of writing).
-RUN npm install -g @anthropic-ai/claude-code@latest
+RUN npm install -g --fetch-retries=8 --fetch-retry-mintimeout=20000 \
+        @anthropic-ai/claude-code@latest
 
 # Single Python dep: pydantic. The dispatch script and PreToolUse hook both
 # import scripts/schemas.py which uses pydantic — that's it.
@@ -51,19 +57,15 @@ RUN uv pip install --system --no-cache "pydantic>=2.9"
 WORKDIR /workspace
 COPY agent/main-agent/ ./
 
-# Pre-create dirs the agent + runner write into, so first writes don't trip on
-# missing-parent.
-RUN mkdir -p ./.dispatched ./meta-planning
+# `claude --dangerously-skip-permissions` refuses to run as root → run as a non-root
+# user. The workspace + the user's HOME (~/.claude lives there) must be writable.
+RUN mkdir -p ./.dispatched ./meta-planning \
+    && useradd -m -u 1000 agent \
+    && chown -R agent:agent /workspace /home/agent
+USER agent
+ENV HOME=/home/agent
 
-# Claude Code refuses --dangerously-skip-permissions when running as root, so run
-# as a non-root user. uid 1000 keeps a bind-mounted /workspace (e.g. .dispatched)
-# writable on Linux hosts; the npm global install lives in world-readable
-# /usr/local, so `claude` is still on PATH.
-RUN useradd --create-home --uid 1000 claude \
-    && chown -R claude:claude /workspace
-USER claude
-ENV HOME=/home/claude
-
-# `claude --dangerously-skip-permissions` is the canonical entrypoint per
-# agent/main-agent/CLAUDE.md. ANTHROPIC_API_KEY MUST be provided at run time.
-ENTRYPOINT ["claude", "--dangerously-skip-permissions"]
+# Headless launcher: Cloud Run Jobs have no TTY, so we can't use the interactive
+# `claude` REPL. launch.py fetches the goal from GET /internal/bootstrap and execs
+# `claude -p`. ANTHROPIC_API_KEY + ALPHA_INTERNAL_{TOKEN,RUNNER_URL} MUST be set at run time.
+ENTRYPOINT ["python3", "launch.py"]

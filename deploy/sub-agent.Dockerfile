@@ -38,8 +38,8 @@
 #     "import envpool; e=envpool.make('MiniGrid-Empty-8x8-v0', env_type='gymnasium', \
 #      num_envs=64); e.reset(); print(e.step(e.action_space.sample().repeat(64))[0].shape)"
 
-# EnvPool 0.8.4 ships only linux/amd64 wheels (cp37–cp311), so the base must be
-# amd64 even on arm64 hosts. Pin it via a build ARG — a constant --platform value
+# EnvPool ships linux/amd64 wheels, so the base must be amd64 even on arm64
+# hosts. Pin it via a build ARG — a constant --platform value
 # on FROM trips the BuildKit lint (FromPlatformFlagConstDisallowed); a variable
 # does not, and the default keeps amd64 even when --platform isn't passed.
 ARG ENVPOOL_PLATFORM=linux/amd64
@@ -93,13 +93,13 @@ COPY agent/sub-agent/ ./
 
 RUN mkdir -p ./artifacts
 
-# Claude Code refuses --dangerously-skip-permissions when running as root. Run
-# as a non-root user instead. uid 1000 keeps a bind-mounted /workspace writable
-# on Linux hosts; the npm global install above lives in world-readable
-# /usr/local, so `claude` is still on PATH.
-RUN useradd --create-home --uid 1000 claude \
-    && chown -R claude:claude /workspace
-USER claude
-ENV HOME=/home/claude
+# claude refuses --dangerously-skip-permissions as root → create a non-root `agent`
+# user (workspace + HOME writable). We do NOT set `USER agent` here: this image runs on
+# Modal, whose harness runs as root and would break under a non-root USER; the sub_agent
+# function drops to `agent` for the claude subprocess via subprocess(user="agent").
+RUN useradd -m -u 1000 agent \
+    && chown -R agent:agent /workspace /home/agent
 
-ENTRYPOINT ["claude", "--dangerously-skip-permissions"]
+# No ENTRYPOINT: Modal invokes launch.py from the sub_agent function with the right env
+# (ALPHA_JOB_ID etc.). An ENTRYPOINT here fires at container boot with no args and crashes
+# (see infra/modal_app.py .entrypoint([])). launch.py is the launcher; the function runs it.

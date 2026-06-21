@@ -8,9 +8,8 @@ and exit.
 
 ## What you get on startup
 
-The runner mounts a per-session volume at `/workspace/.dispatched` and writes your
-dispatch record to `/workspace/.dispatched/${ALPHA_JOB_ID}.json`. Read it first
-(your job id is in the `ALPHA_JOB_ID` env var).
+Your dispatch record is at `/workspace/.dispatched/${ALPHA_JOB_ID}.json` (written into
+your container at boot). Read it first (your job id is in the `ALPHA_JOB_ID` env var).
 Shape (validated by the main agent's dispatch script):
 
 ```json
@@ -95,11 +94,11 @@ none moved the metric — that's a valid negative finding.
 
 ## Output: write the RunResult
 
-When you stop, write `/workspace/result.json`. On exit, the Stop hook copies it
-atomically into the volume and the runner picks it up (writing a `.done` sentinel
-so a half-written file is never read). Put any binary artifacts (plots, logs,
-checkpoints) under `/workspace/.dispatched/artifacts/${ALPHA_JOB_ID}/` — the runner
-ships those to GCS and attaches the `gs://` URLs to your result.
+When you stop, write `/workspace/result.json`. On exit, the Stop hook POSTs your
+result to the runner over HTTP (`/internal/result`). Put any binary artifacts (plots,
+logs, checkpoints) under `/workspace/.dispatched/artifacts/${ALPHA_JOB_ID}/` — the hook
+base64-encodes them into that POST; the runner uploads them to GCS and attaches the
+URLs to your result.
 
 ```json
 {
