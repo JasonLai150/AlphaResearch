@@ -7,6 +7,13 @@ import { createSession, sendMessage, ApiError } from "@/lib/api";
 import { getDefaultBudget } from "@/lib/settings-store";
 import type { TranscriptItem } from "@/lib/types";
 
+/** Autonomous-loop options carried from the composer for a brand-new session. */
+export interface AutonomousOptions {
+  mode?: "oneshot" | "autonomous";
+  maxRounds?: number;
+  goalMetric?: number;
+}
+
 /** Clear pending if no assistant reply lands within this window (#3). */
 const PENDING_TIMEOUT_MS = 30_000;
 
@@ -73,7 +80,7 @@ export function useChatSubmit({
   }, []);
 
   const onSubmit = useCallback(
-    async (text: string) => {
+    async (text: string, opts?: AutonomousOptions) => {
       setBusy(true);
       try {
         if (!activeId) {
@@ -81,7 +88,14 @@ export function useChatSubmit({
           // Apply the user's saved default budget (Settings) if any; undefined
           // is omitted from the request so the backend default still applies.
           const { session_id } = await createSession(
-            { userId: userId ?? "", goal: text, budget: getDefaultBudget() },
+            {
+              userId: userId ?? "",
+              goal: text,
+              budget: getDefaultBudget(),
+              mode: opts?.mode,
+              maxRounds: opts?.maxRounds,
+              goalMetric: opts?.goalMetric,
+            },
             token
           );
           onCreate(session_id);

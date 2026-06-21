@@ -156,6 +156,19 @@ export interface WireMessage {
   ts: string;
 }
 
+/** Autonomous loop snapshot from read_full_session (mirrors infra/schemas.py Loop). */
+export interface WireLoop {
+  session_id: string;
+  status: LoopStatus;
+  max_rounds: number;
+  goal_metric: number | null;
+  plateau_k: number;
+  stop_requested: boolean;
+  current_job_id: string | null;
+  stop_reason: string;
+  rounds: { round_index: number; best_metric: number | null }[];
+}
+
 export interface FullSession {
   session: WireSession | null;
   jobs: WireJob[];
@@ -163,6 +176,8 @@ export interface FullSession {
   tree: Record<string, string[]>;
   transcript: WireMessage[];
   artifacts: WireArtifact[];
+  /** Null for oneshot sessions. */
+  loop?: WireLoop | null;
 }
 
 // ─── Live view models (built by the reducer from the event stream) ───────────
@@ -170,6 +185,26 @@ export interface FullSession {
 export interface MetricPoint {
   step: number;
   reward: number;
+}
+
+// Mirror of infra/schemas.py LoopStatus.
+export type LoopStatus =
+  | "running"
+  | "completed"
+  | "stopped"
+  | "budget_exhausted"
+  | "failed";
+
+/** Live view of an autonomous session's research loop, folded from round_started /
+ *  loop_stopped status events (and seeded from the /full snapshot on resume). */
+export interface LoopView {
+  /** Current round index (1-based). */
+  round: number;
+  maxRounds: number;
+  goalMetric?: number | null;
+  status: LoopStatus;
+  /** Why the loop stopped (only set once terminal). */
+  reason?: string;
 }
 
 export interface JobView {
@@ -220,6 +255,8 @@ export interface SessionState {
   backend?: string;
   /** Session mode, populated from spawn/status payloads when present. */
   mode?: string;
+  /** Autonomous loop state, when the session is an autonomous loop. */
+  loop?: LoopView;
 }
 
 /** SSE connection lifecycle, surfaced to the UI. */

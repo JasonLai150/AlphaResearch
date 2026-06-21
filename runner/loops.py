@@ -148,6 +148,14 @@ async def _consume_sessions_once() -> None:
             # job as queued-with-a-live-sandbox.
             await store.mark_job_running(root_id, sandbox_id, "cloud_run_job")
             await _emit(sid, root_id, 0, EventType.status, {"status": "running", "sandbox": sandbox_id})
+            # Round 1 of an autonomous loop: emit round_started here so the UI shows
+            # "Round 1 / N" from the start. Rounds 2+ are announced by _advance_loop
+            # before re-enqueue, so only emit when no round has been recorded yet.
+            loop = await store.get_loop(sid)
+            if loop is not None and not loop.rounds:
+                await _emit(sid, root_id, 0, EventType.status,
+                            {"phase": "round_started", "round_index": 1,
+                             "max_rounds": loop.max_rounds, "goal_metric": loop.goal_metric})
             await r.xdel(store.SESSIONS_QUEUE, entry_id)  # SEV-1: xdel only after success
 
 
@@ -269,7 +277,8 @@ async def _advance_loop(job) -> None:
         await store.set_loop_status(sid, decision.status, decision.reason)
         await _emit(sid, job.id, 0, EventType.status,
                     {"phase": "loop_stopped", "status": decision.status.value,
-                     "reason": decision.reason})
+                     "reason": decision.reason, "round_index": len(loop.rounds),
+                     "max_rounds": loop.max_rounds, "goal_metric": loop.goal_metric})
         return
 
     # continue: create + enqueue the next round's depth-0 agent execution.
@@ -283,7 +292,8 @@ async def _advance_loop(job) -> None:
     await r.json().set(store._session_key(sid), "$.root_job_id", new_id)
     await store.enqueue_session(sid)
     await _emit(sid, new_id, 0, EventType.status,
-                {"phase": "round_started", "round_index": next_round})
+                {"phase": "round_started", "round_index": next_round,
+                 "max_rounds": loop.max_rounds, "goal_metric": loop.goal_metric})
 
 
 async def _finalize_failed(job, reason: str = "sandbox died") -> None:

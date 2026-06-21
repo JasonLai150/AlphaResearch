@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Menu, Network, Sparkles } from "lucide-react";
+import { toast } from "sonner";
 
+import { stopSession } from "@/lib/api";
 import { useAppAuth } from "@/components/auth/app-auth";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ChatComposer } from "@/components/chat-composer";
@@ -30,6 +32,7 @@ export default function Page() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [treeOpen, setTreeOpen] = useState(false);
+  const [stopping, setStopping] = useState(false);
 
   const { sessions, loading, refresh } = useSessions(userId, getToken);
   const { state, phase, notFound, reconnect } = useSession(activeId, getToken);
@@ -43,6 +46,19 @@ export default function Page() {
     else url.searchParams.delete("s");
     window.history.replaceState({}, "", url.toString());
   }
+
+  const onStop = useCallback(async () => {
+    if (!activeId || stopping) return;
+    setStopping(true);
+    try {
+      await stopSession(activeId, await getToken());
+      toast.info("Stop requested — the loop halts at the next round boundary.");
+    } catch {
+      toast.error("Couldn't stop the loop.");
+    } finally {
+      setStopping(false);
+    }
+  }, [activeId, stopping, getToken]);
 
   const { busy, pending, optimistic, onSubmit, settle, reconcile } =
     useChatSubmit({
@@ -177,6 +193,9 @@ export default function Page() {
                 startedAt={state.startedAt}
                 onReconnect={reconnect}
                 notFound={notFound}
+                loop={state.loop}
+                onStop={onStop}
+                stopping={stopping}
               />
               {!notFound && (
                 <>
@@ -207,6 +226,7 @@ export default function Page() {
                 <ChatComposer
                   onSubmit={onSubmit}
                   busy={busy}
+                  allowAutonomous
                   placeholder="e.g. Improve PPO sample efficiency on MiniGrid-DoorKey-8x8…"
                   hint="Press Enter to start the run"
                 />
