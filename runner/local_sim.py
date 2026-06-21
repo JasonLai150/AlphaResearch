@@ -63,7 +63,7 @@ async def _msg(sid, jid, role, content) -> None:
 def _chunk_text(content: str, group: int = 3) -> list[str]:
     """Split `content` into ~`group`-word chunks, preserving trailing whitespace
     so that ``"".join(chunks) == content`` (deltas concatenate back exactly)."""
-    words = re.findall(r"\S+\s*", content)
+    words = re.findall(r"\s*\S+\s*", content)
     if not words:
         return []
     return ["".join(words[i : i + group]) for i in range(0, len(words), group)]
@@ -81,7 +81,8 @@ async def _stream_assistant(sid, jid, content) -> None:
             sid, jid, 0, EventType.token,
             {"msg_id": msg_id, "role": "assistant", "delta": chunk, "final": i == last},
         )
-        await asyncio.sleep(_TOKEN_TICK)
+        if i < last:
+            await asyncio.sleep(_TOKEN_TICK)
     await store.append_message(
         Message(session_id=sid, job_id=jid, role="assistant", content=content)
     )

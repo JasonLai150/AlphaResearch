@@ -25,6 +25,15 @@ def test_chunk_text_empty_is_no_chunks():
     assert local_sim._chunk_text("") == []
 
 
+def test_chunk_text_single_word():
+    assert local_sim._chunk_text("hello") == ["hello"]
+
+
+def test_chunk_text_preserves_leading_and_trailing_whitespace():
+    text = "  hello   world  "
+    assert "".join(local_sim._chunk_text(text)) == text
+
+
 @pytest.mark.asyncio
 async def test_stream_assistant_emits_tokens_then_persists(monkeypatch):
     events = []
