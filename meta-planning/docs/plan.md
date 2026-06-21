@@ -15,9 +15,17 @@ Stream tailer.
 - Infra seam + self-similar agent loop + local backend: working.
 - Cloud backplane fully wired & verified: **Redis Cloud + GCS + Modal** sandbox round-trip
   (local → spawn → sandbox writes shared Redis/GCS → read back).
-- Not yet proven: real Claude lead agent orchestrating over Modal end-to-end; live web demo.
+- Agent harness flipped to **Claude Code CLI** (files-only, no SDK loop): main-agent
+  + sub-agent each have `CLAUDE.md` + `.claude/settings.json` + `skills/` + hooks; the
+  containers boot `claude --dangerously-skip-permissions`. Dispatch is a Bash call to
+  `scripts/dispatch_subagent.py` validated by a `ResearchPlan` schema + PreToolUse hook;
+  WebFetch capped by PostToolUse hook.
+- Not yet proven: real Claude lead agent orchestrating over Modal end-to-end; live web demo;
+  runner that turns `.dispatched/*.json` records into actual sub-agent containers.
 
 ## Next
+- Build the runner that watches `.dispatched/` and spawns sub-agent containers
+  (Modal or Docker) per dispatch record; write back `<job_id>.result.json`.
 - Run the full depth-0 agent loop over Modal; then API + web UI live demo.
 - Replace synthetic experiment stub with real minigrid+PPO training.
 - Cloud Run deploy (Phase 6).
