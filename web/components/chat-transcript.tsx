@@ -121,6 +121,13 @@ export function ChatTranscript({
                 ) : (
                   <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-body">
                     {m.text}
+                    {m.streaming && (
+                      <span
+                        data-testid="stream-caret"
+                        aria-hidden
+                        className="ml-0.5 inline-block h-[1.1em] w-[2px] translate-y-[0.15em] animate-pulse bg-sunset"
+                      />
+                    )}
                   </p>
                 )}
               </article>
