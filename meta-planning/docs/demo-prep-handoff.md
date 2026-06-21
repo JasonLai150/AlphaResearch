@@ -57,9 +57,10 @@ said so. envpool stays; the trainer uses it.
   - NOTE: deploy Modal with **`modal deploy`**, NOT `deploy_modal.sh`, unless you also intend
     to recreate `alpha-secrets` from `.env` — the local `.env` has a **mangled `ALPHA_REDIS_URL`**
     (doubled / no scheme). `alpha-secrets` was last synced from GCP (funded key + wandb).
-- **Cloud Run: deploying** (`deploy_cloudrun.sh` rebuilds api + main-agent images with the
-  schema caps + research skill). Confirm with its built-in smoke + `gcloud run services
-  describe alpha-api`. The main-agent image MUST carry the new `schemas.py` for the caps to bite.
+- **Cloud Run: DEPLOYED + verified.** `deploy_cloudrun.sh` rebuilt api + main-agent images
+  (`v20260621-080428`, revision `alpha-api-00036-8rj`) with the schema caps + research skill;
+  its smoke ran a real main-agent claude round-trip (boots, secret + egress OK). Same code
+  generation as Modal → no skew.
 
 ## Open items / next steps
 1. **wandb diagrams need runner env.** The trainer logs to wandb, but `capture_wandb.py`
