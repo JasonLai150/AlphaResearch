@@ -1,0 +1,54 @@
+# Per-Dockerfile ignore for deploy/api.Dockerfile (BuildKit uses
+# "<dockerfile>.dockerignore" in preference to the root .dockerignore).
+#
+# The root .dockerignore is tuned for the minimal AGENT images (which COPY only
+# agent/<name>/ and exclude infra/orchestrator/pyproject). The API+runner image
+# is the opposite: it NEEDS infra/, orchestrator/, runner/, pyproject.toml, uv.lock —
+# so this file keeps those IN the context and excludes only what the API doesn't need.
+
+# --- Git / Editor / OS ---
+.git
+.gitignore
+.gitattributes
+.cursor
+.claude
+.vscode
+.idea
+.DS_Store
+*.swp
+*.swo
+
+# --- Python build & cache ---
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
+.venv
+venv
+.pytest_cache
+.ruff_cache
+.mypy_cache
+build
+dist
+
+# --- Not needed in the API image ---
+web
+node_modules
+agent
+tests
+meta-planning
+docs
+deploy
+README.md
+CLAUDE.md
+
+# --- Secrets — NEVER bake into images ---
+.env
+.env.*
+!.env.example
+*-sa-key.json
+gcs-sa-key.json
+*.pem
+
+# --- Local data ---
+.artifacts
+*.log
