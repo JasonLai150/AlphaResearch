@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 import type { CurrentUser } from "@/lib/types";
 
@@ -143,5 +143,13 @@ describe("TreePanel states", () => {
 
     expect(screen.getByText("No agents yet.")).toBeInTheDocument();
     expect(screen.getByText("None dispatched yet.")).toBeInTheDocument();
+  });
+
+  it("fires onExpand when the tree is clicked", () => {
+    const onExpand = vi.fn();
+    const tree = { id: "root", label: "Main agent", status: "running" as const, children: [] };
+    render(<TreePanel tree={tree} subagents={[]} artifacts={[]} onExpand={onExpand} />);
+    fireEvent.click(screen.getByRole("button", { name: /expand agent graph/i }));
+    expect(onExpand).toHaveBeenCalledTimes(1);
   });
 });

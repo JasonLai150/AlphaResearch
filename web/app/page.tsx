@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Menu, Network, Sparkles } from "lucide-react";
 
+import { AgentGraph } from "@/components/agent-graph";
 import { useAppAuth } from "@/components/auth/app-auth";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ChatComposer } from "@/components/chat-composer";
@@ -21,6 +22,7 @@ import { useSession } from "@/hooks/use-session";
 import { useSessions } from "@/hooks/use-sessions";
 import {
   artifactsOf,
+  graphOf,
   rootJob,
   subagentsOf,
   treeOf,
@@ -32,6 +34,7 @@ export default function Page() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [treeOpen, setTreeOpen] = useState(false);
+  const [graphOpen, setGraphOpen] = useState(false);
 
   const {
     width: sidebarWidth,
@@ -46,6 +49,7 @@ export default function Page() {
     setActiveId(id);
     setSidebarOpen(false);
     setTreeOpen(false);
+    setGraphOpen(false);
     const url = new URL(window.location.href);
     if (id) url.searchParams.set("s", id);
     else url.searchParams.delete("s");
@@ -115,6 +119,7 @@ export default function Page() {
   };
 
   const tree = treeOf(state);
+  const graph = graphOf(state);
   const subagents = subagentsOf(state);
   const artifacts = artifactsOf(state);
 
@@ -129,7 +134,12 @@ export default function Page() {
   );
 
   const rightRail = (
-    <TreePanel tree={tree} subagents={subagents} artifacts={artifacts} />
+    <TreePanel
+      tree={tree}
+      subagents={subagents}
+      artifacts={artifacts}
+      onExpand={() => setGraphOpen(true)}
+    />
   );
 
   return (
@@ -241,6 +251,9 @@ export default function Page() {
           </SheetContent>
         </Sheet>
       </div>
+      {graphOpen && (
+        <AgentGraph graph={graph} goal={state.goal} onClose={() => setGraphOpen(false)} />
+      )}
     </TooltipProvider>
   );
 }
