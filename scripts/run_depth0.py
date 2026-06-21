@@ -16,6 +16,7 @@ import sys
 
 from infra import store
 from infra.config import settings
+from infra.observability import init_observability
 from infra.schemas import Job, JobKind
 
 
@@ -33,6 +34,7 @@ async def main(goal: str) -> None:
 
 
 if __name__ == "__main__":
+    init_observability("dev-depth0")
     default_goal = "Improve PPO sample efficiency on MiniGrid-DoorKey-8x8"
     goal = sys.argv[1] if len(sys.argv) > 1 else default_goal
     asyncio.run(main(goal))
