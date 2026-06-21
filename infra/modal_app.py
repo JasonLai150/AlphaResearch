@@ -35,6 +35,7 @@ image = (
         "httpx",
         "tenacity",
         "orjson",
+        "sentry-sdk[fastapi]>=2.35",
         "numpy",
         "matplotlib",
     )
@@ -54,6 +55,9 @@ app = modal.App(APP_NAME)
 @app.function(image=image, timeout=3600, secrets=[secret])
 async def run_job(job_id: str) -> None:
     """Entrypoint inside a Modal sandbox: run a prebaked experiment job."""
+    from infra.observability import init_observability
+    init_observability("modal-experiment")
+
     from infra import store
     from infra.schemas import JobKind
 
@@ -90,6 +94,8 @@ def sub_agent(
 ) -> None:
     """Boot the Claude Code sub-agent. The per-session volume is mounted at
     /workspace/.dispatched by the runner at spawn time."""
+    # Intentionally NOT Sentry-instrumented: sub_image is built from deploy/sub-agent.Dockerfile
+    # and does not carry infra/; visibility comes via runner/internal-API spans (Tasks 3-4).
     env = os.environ.copy()
     env["ALPHA_JOB_ID"] = job_id
     env["ALPHA_SESSION_ID"] = session_id

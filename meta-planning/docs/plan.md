@@ -28,6 +28,9 @@ pure Redis Stream tailer.
 
 ## Next (milestones — see tasks.md for granular checkboxes)
 - M0 ✅ tests · M1 ✅ runner · M2 ✅ containers · M7 ✅ deploy tooling — delivered in PR #8.
+- Phase 1 visibility: add Sentry traces/logs around the API, runner, internal API, Cloud Run
+  client, Modal client, agent hooks, and artifact paths before live cloud testing. See
+  `../../docs/sentry-observability-plan.md`.
 - M3/M4: prove the depth-0 + sub-agent round-trip on real cloud (fix the volume bridge first).
 - M5: replace the synthetic stub with real minigrid+PPO. M6: web UI live demo (charts, tree, resume).
 - M7 (execute): run the bootstrap + deploy scripts + `modal deploy`; verify Redis reachable from Cloud Run.
@@ -37,3 +40,4 @@ pure Redis Stream tailer.
 - GCS bucket is **public-read** for the demo (revertible IAM binding).
 - Coordination is P0 "summaries-up"; the population/synthesis research loop is deferred.
 - Cloud Run ↔ Modal Volume access is the one unproven seam for a live sub-agent round-trip.
+- Sentry is internal/demo observability only; Redis/SSE remains the product-visible source of truth.

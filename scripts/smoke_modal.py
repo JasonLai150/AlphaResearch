@@ -14,6 +14,7 @@ import time
 
 from infra import dispatch, store
 from infra.config import settings
+from infra.observability import init_observability
 from infra.schemas import Job, JobKind
 
 TIMEOUT_S = 180
@@ -61,4 +62,5 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    init_observability("smoke-modal")
     asyncio.run(main())

@@ -23,6 +23,10 @@ from infra.config import settings
 from infra.schemas import Job, JobKind, JobStatus
 from runner.internal_api import router as internal_router
 
+from infra.observability import init_observability
+
+init_observability("api")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

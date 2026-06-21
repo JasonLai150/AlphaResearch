@@ -37,6 +37,23 @@ See `docs/backend-mvp-notes.md` for the full SEV-fix map + the one remaining gap
 - [ ] Modal app deployed — NOT deployed (`modal deploy infra/modal_app.py` pending; needs secrets)
 - [ ] Cloud Run deployed — scripts ready but not yet run against the project (APIs were disabled)
 
+## Phase 1 visibility — Sentry AI trace observability
+Sentry is the internal/demo trace layer for live testing; Redis/SSE remains authoritative for
+product state. Finalized plan: `docs/sentry-observability-plan.md`.
+- [ ] Add `sentry-sdk[fastapi]` + `@sentry/nextjs`, env template values, and cloud secret notes.
+- [ ] Add `infra/observability.py`: DSN-unset no-op init, recursive scrubber, bounded payloads,
+      helper tags/attributes/spans.
+- [ ] Initialize Sentry in API+runner, Modal app functions, main/sub-agent runtime paths, and local
+      smoke scripts.
+- [ ] Add custom spans around runner loops, Cloud Run spawn/poll, Modal spawn/poll, internal
+      dispatch/children endpoints, store event/run/artifact writes, and agent hook/tool paths.
+- [ ] Keep content capture controlled by `ALPHA_SENTRY_CAPTURE_CONTENT`; always scrub secrets and
+      bound payloads before send.
+- [ ] Verify Sentry-disabled mode: imports, existing backend tests, and `scripts/smoke_infra.py`
+      pass with no DSN.
+- [ ] Manual DSN-enabled demo: create one session, trigger dispatch, confirm Sentry trace/logs map
+      back to Redis by `session_id`/`job_id`.
+
 ## Remaining milestones
 - [~] **M3/M4 — real depth-0 + sub-agent round-trip**: implemented + mock-tested (`test_e2e_smoke`),
       NOT verified on real cloud. **Blocker:** runner↔Modal-volume bridge — Cloud Run can't mount a
