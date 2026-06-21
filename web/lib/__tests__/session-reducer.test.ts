@@ -5,6 +5,7 @@ import {
   subagentsOf,
   treeOf,
   artifactsOf,
+  graphOf,
 } from "@/lib/session-reducer";
 import type { EventEnvelope, SessionState } from "@/lib/types";
 
@@ -341,5 +342,71 @@ describe("token events → coalesced typewriter transcript item", () => {
       env({ type: "token", job_id: "root", payload: { msg_id: "m1#0", delta: "two", final: true } }),
     ];
     expect(reduce(events)).toEqual(reduce(events));
+  });
+});
+
+// ─── (i) graphOf builds nodes + links from the job graph ─────────────────────
+
+describe("graphOf nodes and links", () => {
+  it("maps jobs to nodes, root labeled 'Main agent', children A/B, links active when running", () => {
+    const state = reduce([
+      env({ type: "spawn", job_id: "root", parent_job_id: null, depth: 0, payload: { kind: "agent" } }),
+      env({ type: "spawn", job_id: "c1", parent_job_id: "root", depth: 1, payload: { kind: "experiment", goal: "tune lr" } }),
+      env({ type: "status", job_id: "c1", payload: { status: "running" } }),
+      env({ type: "spawn", job_id: "c2", parent_job_id: "root", depth: 1, payload: { kind: "experiment" } }),
+    ]);
+    const { nodes, links } = graphOf(state);
+
+    expect(nodes.map((n) => n.id)).toEqual(["root", "c1", "c2"]);
+    expect(nodes[0]).toMatchObject({ isRoot: true, label: "Main agent", depth: 0 });
+    expect(nodes[1]).toMatchObject({ isRoot: false, label: "A", kind: "tune lr" });
+    expect(nodes[2].label).toBe("B");
+
+    // One link per child; active iff the child is running.
+    expect(links).toEqual([
+      { source: "root", target: "c1", active: true },
+      { source: "root", target: "c2", active: false },
+    ]);
+  });
+
+  it("returns empty graph when there is no root", () => {
+    expect(graphOf(emptyState(SESSION))).toEqual({ nodes: [], links: [] });
+  });
+});
+
+// ─── (j) lastLine / streaming stamping ───────────────────────────────────────
+
+describe("graph node live line stamping", () => {
+  it("stamps a job's lastLine from a job-scoped log without creating a job from a token", () => {
+    const state = reduce([
+      env({ type: "spawn", job_id: "root", depth: 0, payload: {} }),
+      env({ type: "log", job_id: "root", payload: { role: "assistant", content: "scoping the task" } }),
+    ]);
+    expect(state.jobs["root"].lastLine).toBe("scoping the task");
+    expect(state.jobs["root"].streaming).toBe(false);
+  });
+
+  it("token deltas set streaming + grow the line on an existing job, never create one", () => {
+    const state = reduce([
+      env({ type: "spawn", job_id: "root", depth: 0, payload: {} }),
+      env({ type: "token", job_id: "root", payload: { msg_id: "m#0", delta: "Hel", final: false } }),
+      env({ type: "token", job_id: "root", payload: { msg_id: "m#0", delta: "lo", final: true } }),
+    ]);
+    expect(state.jobs["root"].lastLine).toBe("Hello");
+    expect(state.jobs["root"].streaming).toBe(false);
+
+    // Token for an unknown job must NOT create a job (preserves the invariant).
+    const orphan = reduce([
+      env({ type: "token", job_id: "ghost", payload: { msg_id: "x#0", delta: "hi", final: true } }),
+    ]);
+    expect(orphan.order).toEqual([]);
+  });
+
+  it("summary sets lastLine to the summary text", () => {
+    const state = reduce([
+      env({ type: "spawn", job_id: "j1", payload: {} }),
+      env({ type: "summary", job_id: "j1", payload: { summary: "converged at 0.91" } }),
+    ]);
+    expect(state.jobs["j1"].lastLine).toBe("converged at 0.91");
   });
 });
