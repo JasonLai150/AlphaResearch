@@ -1,10 +1,11 @@
-"""Modal app: the prebaked image + the function that runs a job (agent or
-experiment) at depth >= 1. Deploy with `modal deploy infra/modal_app.py` so
-`run_job` is addressable for nested spawn. Used only when DISPATCH_BACKEND=modal;
-the local backend never imports this module.
+"""Modal app: the prebaked image + the function that runs an EXPERIMENT job in a
+sandbox. Deploy with `modal deploy infra/modal_app.py`. Used only when
+DISPATCH_BACKEND=modal; the local backend never imports this module.
+
+Agent jobs (Claude Code harness containers) are launched by the RUNNER, not here.
 
 Phase 2 TODO: implement infra.registry.experiment.run_experiment_real against the
-real prebaked envs/trainers carried by this image, and validate nested spawn.
+real prebaked envs/trainers carried by this image.
 """
 
 from __future__ import annotations
@@ -44,7 +45,7 @@ app = modal.App(APP_NAME)
     secrets=[modal.Secret.from_name("alpha-secrets")],  # REDIS_URL, ANTHROPIC_API_KEY, GCS creds
 )
 async def run_job(job_id: str) -> None:
-    """Self-similar entrypoint inside a Modal sandbox: dispatch by job kind."""
+    """Entrypoint inside a Modal sandbox: run a prebaked experiment job."""
     from infra import store
     from infra.schemas import JobKind
 
@@ -56,9 +57,11 @@ async def run_job(job_id: str) -> None:
 
         await run_experiment_real(job)
     else:
-        from agent.run_agent import run_agent
-
-        await run_agent(job_id)
+        # Agent (Claude Code harness) containers are launched by the runner, not
+        # via run_job. Reaching here means an agent job was mis-routed.
+        raise NotImplementedError(
+            f"agent-kind job {job_id} must be launched by the runner, not run_job"
+        )
 
 
 async def spawn_job(job_id: str) -> str:
