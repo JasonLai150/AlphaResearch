@@ -97,6 +97,27 @@ export interface Subagent {
   rewards?: MetricPoint[];
 }
 
+/** A node in the force-directed agent graph (derived from SessionState). */
+export interface GraphNode {
+  id: string;
+  label: string;
+  kind: string;
+  status: AgentStatus;
+  depth: number;
+  isRoot: boolean;
+  reward?: number;
+  rewards: MetricPoint[];
+  lastLine?: string;
+  streaming?: boolean;
+}
+
+/** A parent→child edge; `active` is true while the child job is running. */
+export interface GraphLink {
+  source: string;
+  target: string;
+  active: boolean;
+}
+
 export interface CurrentUser {
   name: string;
   handle: string;
@@ -186,6 +207,10 @@ export interface JobView {
   artifacts: WireArtifact[];
   /** Insertion order, for stable sibling labels (A/B/C). */
   order: number;
+  /** Latest job-scoped activity line (from log/token/summary), for the graph node. */
+  lastLine?: string;
+  /** True while token deltas for this job are mid-flight (drives the node caret). */
+  streaming?: boolean;
 }
 
 export interface TranscriptItem {
