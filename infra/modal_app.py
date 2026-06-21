@@ -89,6 +89,17 @@ async def spawn_job(job_id: str) -> str:
     return call.object_id
 
 
+@app.function(image=sub_image, timeout=600)
+def warmup() -> str:
+    """Deploy-time smoke + image warm-up (call via `modal run infra/modal_app.py::warmup`).
+    Imports the heavy stack in the REAL sub-agent image so a broken/oversized image fails
+    at deploy, not on the first user chat — and pre-pulls the image into Modal's cache.
+    (The standing min_containers=1 sub_agent container is what primes the memory snapshot.)"""
+    import envpool  # noqa: F401
+    import torch  # noqa: F401
+    return "warmup OK: torch + envpool import in sub_image"
+
+
 # Resourcing (perf levers):
 #  - cpu=8 / memory=8Gi: GUARANTEED cores so envpool can vectorize many envs (its whole
 #    point) and PPO rollout buffers have headroom — without this Modal gives unguaranteed
@@ -106,6 +117,11 @@ async def spawn_job(job_id: str) -> str:
     memory=8192,
     scaledown_window=300,
     enable_memory_snapshot=True,
+    # Demo: keep ONE container always warm so the first chat skips the image
+    # pull + snapshot-restore cold start. Concurrent fan-out beyond 1 still cold-starts;
+    # raise to the demo's idea-count for all-instant (at idle cost). Scale to 0 after the
+    # demo by removing this. The post-deploy warm-up spawn (deploy_modal.sh) primes the snapshot.
+    min_containers=1,
 )
 def sub_agent(
     job_id: str,

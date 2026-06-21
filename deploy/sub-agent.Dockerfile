@@ -14,8 +14,8 @@
 # What's in this image:
 #   - Linux + libgomp1/libstdc++6 (EnvPool .so dlopen targets) + ca-certificates
 #   - Python 3.11 + pydantic + envpool 1.2.5 (MiniGrid + MuJoCo + Atari + classic
-#     control) + gymnasium + minigrid + numpy + matplotlib + tensorboard
-#   - torch (CPU) + vendored CleanRL PPO references (reference/cleanrl/)
+#     control) + gymnasium + minigrid + numpy + matplotlib + wandb + Browserbase
+#   - torch (CPU) + the prebaked PPO trainer (scripts/train_ppo.py)
 #   - Node.js 22 + @anthropic-ai/claude-code  — the entrypoint
 #   - The agent/sub-agent/ workspace
 #
@@ -86,14 +86,14 @@ RUN npm install -g @anthropic-ai/claude-code@2.1.176
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
-# ML stack baked in — the agent's Bash sessions use python3 to train, evaluate,
-# and write artifacts.
-# pydantic is here because /workspace/job.json mirrors ResearchPlan and the
-# agent may want to (re-)validate inputs from Bash.
-# envpool 1.2.x is the first line to ship the MiniGrid env family (DoorKey,
-# FourRooms, BabyAI, ...) alongside its Atari / MuJoCo / classic-control envs —
-# 0.8.x had none, so MiniGrid jobs were impossible. 1.2.5 has cp311–cp314
-# manylinux x86_64 wheels; we stay on 3.11 for stability.
+# ML + monitoring stack in ONE layer (faster builds + better cache). The prebaked
+# trainer scripts/train_ppo.py uses envpool (vectorized) + torch + wandb + matplotlib;
+# tensorboard is dropped (train_ppo.py logs to wandb + writes matplotlib curves).
+# pydantic is here because /workspace/.dispatched/<jid>.json mirrors ResearchPlan.
+# envpool 1.2.x is the first line to ship the MiniGrid env family (DoorKey, Empty,
+# FourRooms, BabyAI, ...) alongside Atari / MuJoCo / classic-control — cp311 manylinux
+# x86_64 wheels; we stay on 3.11. wandb + Browserbase/Stagehand drive capture_wandb.py
+# (playwright is only a CDP client to the REMOTE Browserbase browser — no local Chromium).
 RUN uv pip install --system --no-cache \
         "pydantic>=2.9" \
         "envpool==1.2.5" \
@@ -101,24 +101,16 @@ RUN uv pip install --system --no-cache \
         "minigrid==3.1.0" \
         "numpy" \
         "matplotlib" \
-        "tensorboard"
-
-# Torch (CPU-only wheel — no CUDA in this image) is the learner for the vendored
-# CleanRL PPO references under reference/cleanrl/. Separate RUN + the PyTorch CPU
-# index so we don't pull the multi-GB CUDA build.
-RUN uv pip install --system --no-cache \
-        --index-url https://download.pytorch.org/whl/cpu \
-        "torch"
-
-# wandb run logging + the Browserbase/Stagehand smart agent for deterministic
-# screenshots of THIS sub-agent's live wandb run (scripts/capture_wandb.py).
-# playwright is used only as a CDP client to the REMOTE Browserbase browser, so we
-# install the package but NOT the local Chromium binaries (no `playwright install`).
-RUN uv pip install --system --no-cache \
         "wandb" \
         "browserbase" \
         "playwright" \
         "stagehand"
+
+# Torch (CPU-only wheel — no CUDA) is the PPO learner. Separate RUN + the PyTorch CPU
+# index so we don't pull the multi-GB CUDA build.
+RUN uv pip install --system --no-cache \
+        --index-url https://download.pytorch.org/whl/cpu \
+        "torch"
 
 WORKDIR /workspace
 COPY agent/sub-agent/ ./
