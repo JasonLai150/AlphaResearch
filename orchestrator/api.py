@@ -25,6 +25,10 @@ from infra.schemas import EventEnvelope, EventType, Job, JobKind, JobStatus, Mes
 from orchestrator.auth import require_session_access, verified_user_id
 from runner.internal_api import router as internal_router
 
+from infra.observability import init_observability
+
+init_observability("api")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

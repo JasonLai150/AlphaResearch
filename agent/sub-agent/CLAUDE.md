@@ -51,6 +51,18 @@ Your Bash sessions have a real RL stack baked in:
   `ppo_atari_envpool.py` for the envpool wiring) and adapt it. Read its README.
 - gymnasium, minigrid, numpy, matplotlib, tensorboard.
 
+### Speed: use envpool with many parallel envs (this is CPU-bound)
+
+You run on CPU with **guaranteed multiple cores**, so simulation throughput — and thus
+your whole run's wall-clock — depends on stepping **many envs in parallel**. Two rules:
+
+- **Always use envpool, never gym `SyncVectorEnv`** (the bare `ppo.py` uses
+  `SyncVectorEnv`, which steps envs one-at-a-time in Python and wastes the cores). Wire
+  envpool like `ppo_atari_envpool.py` does.
+- **Set `num_envs` from the environment**, not the reference's tiny default (4–8):
+  `num_envs = int(os.environ.get("ALPHA_NUM_ENVS", "64"))`. More parallel envs ≈ more
+  steps/sec until the cores saturate. Keep the policy net small (CPU learner).
+
 ## What stays the same (consistency contract — FROZEN)
 
 You may NOT modify, override, or work around:
@@ -122,6 +134,55 @@ URLs to your result.
 `validated: false` is a fine outcome. Honest negative results are valuable —
 the main agent will combine them across siblings. Lying about results poisons
 the whole session.
+
+## Weights & Biases: log + screenshot YOUR run
+
+You may be one of many sub-agents running at once, so your wandb run must be
+**uniquely and deterministically yours** — otherwise a screenshot could grab a
+sibling's graph. Two steps, both already wired:
+
+1. **Start your run via the helper** (pins the run id to your job id so the URL is
+   knowable and collision-free):
+
+   ```python
+   import sys; sys.path.insert(0, "scripts")
+   from wandb_run import init_wandb
+   run = init_wandb(config={...})      # id=$ALPHA_JOB_ID, entity=$WANDB_ENTITY, project=alpha-<session>
+   # ... log metrics with wandb.log(...) as usual ...
+   ```
+   (If you adapt the CleanRL references, set `WANDB_RUN_ID=$ALPHA_JOB_ID` before
+   `wandb.init`, or call `init_wandb()` instead, so the id is pinned.)
+
+2. **Once your run has logged some metrics, screenshot it** — one Bash call, no URL
+   needed (it derives YOUR run URL from the job id, never a sibling's):
+
+   ```bash
+   python3 scripts/capture_wandb.py
+   ```
+   This drops `wandb_run.png` (+ a best-effort `wandb_summary.json` from the
+   Browserbase smart agent) into `/workspace/.dispatched/artifacts/${ALPHA_JOB_ID}/`,
+   which the Stop hook base64-POSTs to `/internal/result` → GCS → back to the main
+   agent automatically. List the PNG in your `result.json` `artifacts`. Capture AFTER
+   metrics exist (an empty run page has no charts).
+
+## If wandb or the Browserbase agent doesn't work — fall back to code + PNGs
+
+These are conveniences, not requirements. If wandb logging fails (missing
+`WANDB_API_KEY`, auth/network error) or the Browserbase screenshot agent fails
+(missing `BROWSERBASE_*`, Stagehand/agent error, login expired), **do NOT block,
+retry forever, or fail your run over it.** Fall back to the basics:
+
+- **Plot in code.** Generate your figures with matplotlib and save them straight to
+  `/workspace/.dispatched/artifacts/${ALPHA_JOB_ID}/*.png` — the Stop hook ships any
+  files there back exactly like a wandb screenshot would.
+- **Metrics to files.** Put the numbers in `result.json` (and optionally a
+  `metrics.json` / `*.csv` artifact). That is the source of truth, not the dashboard.
+- **Keep it simple.** Prefer basic, standard implementations over anything that
+  depends on a flaky external service. A working local plot beats a broken live view.
+
+Your finding — real numbers in `result.json` plus a plot PNG in the artifacts dir —
+is what matters. The live wandb dashboard and the smart screenshot are nice-to-haves
+layered on top; never let them be the reason a run produces nothing.
 
 ## Hard rules
 

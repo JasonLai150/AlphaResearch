@@ -54,6 +54,10 @@ Modal volume is broken **both** directions (dispatch out + result back), not jus
       Runner also needs Modal creds (`MODAL_TOKEN_*` secrets) to spawn from Cloud Run — added.
 - [~] **M3/M4 round-trip** superseded by PR1+PR2 (the volume bridge is removed, not hydrated).
       PR2 deploy + live e2e verification pending.
+- [x] **Sentry observability** (`sentry` branch) — runner transactions, internal-API spans, event
+      breadcrumbs, scrubber. Verified live: `DefaultCredentialsError` + spawn failures captured in Sentry.
+- [x] **Agent OTEL Layer A** — opt-in (`ALPHA_AGENT_OTEL_ENABLED`); runner injects Claude Code native-OTEL
+      env vars + W3C `TRACEPARENT` into both agent spawns; deploy scripts carry static config. 96 tests pass.
 - [ ] **M5 — real RL training**: `run_experiment_real` still delegates to the synthetic stub; add a
       short minigrid+PPO loop (lazy torch/sb3) and the deps to the Modal image.
 - [x] **M6 — web UI live demo**: recharts `JobNode.rewards`, real parent/child tree via

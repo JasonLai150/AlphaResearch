@@ -28,11 +28,17 @@ def _modal():
     return modal
 
 
-async def spawn_sub_agent(job_id: str, session_id: str, record: dict) -> str:
+async def spawn_sub_agent(
+    job_id: str, session_id: str, record: dict,
+    *, traceparent: str = "", baggage: str = "",
+) -> str:
     """Spawn the sub_agent Modal Function for one dispatched idea. Returns the
     FunctionCall object_id (stored as Job.sandbox_id). Injects the per-session token +
     runner URL (SEV-4) so the sub-agent's hooks authenticate as this session only, and
-    passes the dispatch record so the sub-agent gets its plan/idea without a volume."""
+    passes the dispatch record so the sub-agent gets its plan/idea without a volume.
+
+    traceparent/baggage carry W3C trace context from the runner's spawn transaction so
+    the sub-agent's native-OTEL traces (Layer A) correlate to this session in Sentry."""
     modal = _modal()
     token = await store.get_session_token(session_id)
     fn = modal.Function.from_name(settings.modal_app_name, "sub_agent")
@@ -42,6 +48,13 @@ async def spawn_sub_agent(job_id: str, session_id: str, record: dict) -> str:
         internal_token=token,
         internal_runner_url=settings.internal_runner_url,
         dispatch_record=json.dumps(record),
+        traceparent=traceparent,
+        baggage=baggage,
+        # wandb + Browserbase identifiers so the sub-agent can deterministically
+        # screenshot its OWN wandb run (secrets ride in the Modal alpha-secrets).
+        wandb_entity=settings.wandb_entity,
+        browserbase_context_id=settings.browserbase_context_id,
+        browserbase_project_id=settings.browserbase_project_id,
     )
     return call.object_id
 

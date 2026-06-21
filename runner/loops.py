@@ -22,6 +22,9 @@ from __future__ import annotations
 import asyncio
 import time
 
+import sentry_sdk
+
+from infra.observability import tag_alpha
 from infra import store
 from infra.schemas import EventEnvelope, EventType, JobStatus, RunResult
 from runner.cloud_run_client import poll_cloud_run_exec, spawn_main_agent_job
@@ -110,16 +113,26 @@ async def _consume_sessions_once() -> None:
         if job is None or job.status not in _SPAWNABLE or job.sandbox_id:
             await r.xdel(store.SESSIONS_QUEUE, entry_id)  # SEV-1: already spawned/terminal
             continue
-        try:
-            sandbox_id = await spawn_main_agent_job(sid, root_id)  # may raise (SEV-9) -> no xdel
-        except Exception as e:  # noqa: BLE001
-            print(f"[session_loop] spawn failed for {root_id}: {e!r}")
-            continue
-        # Atomic: status+sandbox_id+backend in one txn so a crash never strands the
-        # job as queued-with-a-live-sandbox.
-        await store.mark_job_running(root_id, sandbox_id, "cloud_run_job")
-        await _emit(sid, root_id, 0, EventType.status, {"status": "running", "sandbox": sandbox_id})
-        await r.xdel(store.SESSIONS_QUEUE, entry_id)  # SEV-1: xdel only after success
+        with sentry_sdk.start_transaction(
+            op="alpha.runner.spawn_main_agent", name="spawn_main_agent"
+        ) as txn:
+            tag_alpha(txn, session_id=sid, job_id=root_id, depth=0, backend="cloud_run_job")
+            traceparent = sentry_sdk.get_traceparent() or ""
+            baggage = sentry_sdk.get_baggage() or ""
+            try:
+                sandbox_id = await spawn_main_agent_job(  # may raise (SEV-9) -> no xdel
+                    sid, root_id, traceparent=traceparent, baggage=baggage)
+            except Exception as e:  # noqa: BLE001
+                txn.set_status("internal_error")
+                sentry_sdk.capture_exception(e)
+                print(f"[session_loop] spawn failed for {root_id}: {e!r}")
+                continue
+            txn.set_tag("alpha.sandbox_id", sandbox_id)
+            # Atomic: status+sandbox_id+backend in one txn so a crash never strands the
+            # job as queued-with-a-live-sandbox.
+            await store.mark_job_running(root_id, sandbox_id, "cloud_run_job")
+            await _emit(sid, root_id, 0, EventType.status, {"status": "running", "sandbox": sandbox_id})
+            await r.xdel(store.SESSIONS_QUEUE, entry_id)  # SEV-1: xdel only after success
 
 
 # ---- dispatch_loop: spawn sub-agent Modal Functions --------------------
@@ -132,19 +145,31 @@ async def _consume_dispatches_once() -> None:
         if job is None or job.status not in _SPAWNABLE or job.sandbox_id:
             await r.xdel(store.DISPATCH_QUEUE, entry_id)  # SEV-1
             continue
-        try:
-            # PR2: the dispatch record rides as a Modal call arg (no shared volume) —
-            # the sub_agent function writes it into its own /workspace/.dispatched on boot.
-            sandbox_id = await spawn_sub_agent(jid, job.session_id, _record_from_job(job))
-        except Exception as e:  # noqa: BLE001
-            print(f"[dispatch_loop] spawn failed for {jid}: {e!r}")
-            continue
-        await store.mark_job_running(jid, sandbox_id, "modal")  # atomic stamp (see above)
-        p = job.params or {}
-        await _emit(job.session_id, jid, job.depth, EventType.spawn,
-                    {"sandbox": sandbox_id, "kind": job.kind.value,
-                     "goal": p.get("goal"), "strategy": p.get("strategy")})
-        await r.xdel(store.DISPATCH_QUEUE, entry_id)  # SEV-1
+        with sentry_sdk.start_transaction(
+            op="alpha.runner.spawn_sub_agent", name="spawn_sub_agent"
+        ) as txn:
+            tag_alpha(txn, session_id=job.session_id, job_id=jid, depth=job.depth,
+                      job_kind=job.kind.value, backend="modal")
+            traceparent = sentry_sdk.get_traceparent() or ""
+            baggage = sentry_sdk.get_baggage() or ""
+            try:
+                # PR2: the dispatch record rides as a Modal call arg (no shared volume) —
+                # the sub_agent function writes it into its own /workspace/.dispatched on boot.
+                sandbox_id = await spawn_sub_agent(
+                    jid, job.session_id, _record_from_job(job),
+                    traceparent=traceparent, baggage=baggage)
+            except Exception as e:  # noqa: BLE001
+                txn.set_status("internal_error")
+                sentry_sdk.capture_exception(e)
+                print(f"[dispatch_loop] spawn failed for {jid}: {e!r}")
+                continue
+            txn.set_tag("alpha.sandbox_id", sandbox_id)
+            await store.mark_job_running(jid, sandbox_id, "modal")  # atomic stamp (see above)
+            p = job.params or {}
+            await _emit(job.session_id, jid, job.depth, EventType.spawn,
+                        {"sandbox": sandbox_id, "kind": job.kind.value,
+                         "goal": p.get("goal"), "strategy": p.get("strategy")})
+            await r.xdel(store.DISPATCH_QUEUE, entry_id)  # SEV-1
 
 
 # ---- reconcile_loop ----------------------------------------------------
@@ -215,12 +240,21 @@ async def _reconcile_once() -> None:
         try:
             state = await _poll(job)
         except Exception as e:  # noqa: BLE001
+            sentry_sdk.add_breadcrumb(category="alpha.poll", level="warning",
+                                      message=f"poll failed for {job.id}: {e!r}")
             print(f"[reconcile] poll failed for {job.id}: {e!r}")
             continue
-        if state == "done":
-            await _finalize_done(job)
-        elif state == "failed":
-            await _finalize_failed(job)
+        if state in ("done", "failed"):
+            with sentry_sdk.start_transaction(
+                op="alpha.runner.reconcile", name=f"reconcile/{job.backend}"
+            ) as txn:
+                tag_alpha(txn, session_id=job.session_id, job_id=job.id,
+                          depth=job.depth, backend=job.backend)
+                txn.set_tag("alpha.poll_state", state)
+                if state == "done":
+                    await _finalize_done(job)
+                else:
+                    await _finalize_failed(job)
     await _cleanup_terminal_sessions()
 
 

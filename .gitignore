@@ -26,3 +26,6 @@ web/*.tsbuildinfo
 *.log
 .DS_Store
 .artifacts/
+
+# wandb local run dir
+wandb/

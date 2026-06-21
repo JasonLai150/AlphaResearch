@@ -35,7 +35,8 @@ async def test_session_loop_spawns_root_and_records_sandbox(fake_redis):
     spawn = AsyncMock(return_value="exec_1")
     with patch("runner.loops.spawn_main_agent_job", spawn):
         await loops._consume_sessions_once()
-    spawn.assert_awaited_once_with("s_a", "j_root")
+    spawn.assert_awaited_once()
+    assert spawn.await_args.args == ("s_a", "j_root")  # OTEL trace kwargs may also be present
     j = await store.get_job("j_root")
     assert j.sandbox_id == "exec_1"
     assert j.status == JobStatus.running
