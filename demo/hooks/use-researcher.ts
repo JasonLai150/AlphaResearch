@@ -29,6 +29,12 @@ export function useResearcher(sid: string, jobId: string) {
           setLoading(false);
           return;
         }
+        if (!res.ok) {
+          // Transient server error — stop the spinner and retry shortly.
+          setLoading(false);
+          timer = setTimeout(tick, 2000);
+          return;
+        }
         const d = (await res.json()) as ResearcherDetail;
         if (cancelled) return;
         setDetail(d);

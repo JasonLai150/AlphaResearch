@@ -77,10 +77,20 @@ describe("simulation engine → reducer", () => {
     expect(planDeltas).toBe(scn.leadPlan.join("\n\n"));
   });
 
-  it("the winner ends with the highest final reward", () => {
-    const scn = buildScenario("Improve PPO on DoorKey", 2024);
-    const finals = scn.strategies.map((s) => s.points[s.points.length - 1].reward);
-    const max = Math.max(...finals);
-    expect(finals[scn.winnerIdx]).toBe(max);
+  it("the winner ends with the highest final reward (across many seeds)", () => {
+    // The recommendation must never contradict the numbers, for ANY seed.
+    for (let seed = 1; seed <= 200; seed++) {
+      const scn = buildScenario("Improve PPO sample efficiency on DoorKey", seed);
+      const finals = scn.strategies.map((s) => s.points[s.points.length - 1].reward);
+      const max = Math.max(...finals);
+      expect(finals[scn.winnerIdx]).toBe(max);
+    }
+  });
+
+  it("curves start at the stated baseline", () => {
+    const scn = buildScenario("Improve PPO on DoorKey", 314);
+    for (const s of scn.strategies) {
+      expect(Math.abs(s.points[0].reward - scn.baseline)).toBeLessThan(0.05);
+    }
   });
 });

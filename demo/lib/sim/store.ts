@@ -114,10 +114,12 @@ export function listMockSessions(userId: string, nowMs = Date.now()): WireSessio
 export function addTurn(sid: string, userText: string, nowMs = Date.now()): boolean {
   const s = sessions.get(sid);
   if (!s || !userText.trim()) return false;
-  const events = assembleEvents(s);
-  const lastT = events.length ? events[events.length - 1].tMs : 0;
+  // Anchor the follow-up to the user's CURRENT position in the stream (now), not
+  // the end of the whole initial run — otherwise a reply sent mid-run would be
+  // scheduled ~70s out and look like a hung chat. Keep follow-ups ordered.
   const nowOffset = nowMs - s.createdAtMs;
-  const baseMs = Math.max(lastT + 800, nowOffset);
+  const lastTurnBase = s.turns.length ? s.turns[s.turns.length - 1].baseMs : 0;
+  const baseMs = Math.max(nowOffset + 300, lastTurnBase + 4000);
   s.turns.push({ userText: userText.trim(), baseMs });
   s.cache = null;
   return true;

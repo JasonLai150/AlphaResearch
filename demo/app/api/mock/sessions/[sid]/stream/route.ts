@@ -43,25 +43,29 @@ export async function GET(
       let cursor = Number.isFinite(startCursor) ? Math.max(0, startCursor) : 0;
       let idle = 0;
       try {
+        // Re-assemble the timeline each pass (cache-cheap when unchanged) so a
+        // follow-up turn appended MID-RUN is picked up promptly instead of after
+        // the whole initial run drains. Follow-ups schedule after the last-sent
+        // event, so they never reorder events already emitted on this connection.
         while (!aborted) {
           const events = assembleEvents(session);
-          while (cursor < events.length && !aborted) {
-            const ev = events[cursor];
-            const dueAt = session.createdAtMs + ev.tMs;
-            const wait = dueAt - Date.now();
-            if (wait > 0) {
-              // Sleep in short slices so client aborts are noticed promptly.
-              await sleep(Math.min(wait, 500));
-              if (Date.now() < dueAt) continue; // still early — keep waiting
-            }
-            send(cursor, { ...ev.env, v: 1 });
-            cursor++;
-            idle = 0;
+          if (cursor >= events.length) {
+            // Caught up: idle-poll for new turns; heartbeat ~every 8s.
+            await sleep(700);
+            if (++idle % 12 === 0) heartbeat();
+            continue;
           }
-          if (aborted) break;
-          // Caught up: idle-poll so follow-up turns (new events) get picked up.
-          await sleep(700);
-          if (++idle % 12 === 0) heartbeat(); // ~every 8s
+          const ev = events[cursor];
+          const dueAt = session.createdAtMs + ev.tMs;
+          const wait = dueAt - Date.now();
+          if (wait > 0) {
+            // Not due yet — sleep in short slices so aborts are noticed promptly.
+            await sleep(Math.min(wait, 500));
+            continue;
+          }
+          send(cursor, { ...ev.env, v: 2 });
+          cursor++;
+          idle = 0;
         }
       } catch {
         /* controller closed / client gone */

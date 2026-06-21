@@ -120,17 +120,21 @@ export function liveLoop(l: MockLoop, nowMs = Date.now()): LiveLoop {
   let status: LoopStatus = revealed >= total ? "completed" : "running";
   let stopReason: StopReason = status === "completed" ? plan.stopReason : null;
 
-  // User stop takes effect at the next round boundary after the request.
-  if (l.stopRequestedAtMs != null) {
+  // User stop takes effect at the next round boundary after the request — but
+  // only if it was requested before the loop would have finished on its own
+  // (you can't "stop" an already-completed loop).
+  const naturalEndMs = l.createdAtMs + total * PER_ROUND_MS;
+  if (l.stopRequestedAtMs != null && l.stopRequestedAtMs < naturalEndMs) {
     const stopRoundIdx = Math.floor((l.stopRequestedAtMs - l.createdAtMs) / PER_ROUND_MS);
     const stopBoundaryMs = l.createdAtMs + (stopRoundIdx + 1) * PER_ROUND_MS;
     const stopRevealed = Math.min(stopRoundIdx + 1, total);
-    if (stopRevealed < total && nowMs >= stopBoundaryMs) {
+    if (nowMs >= stopBoundaryMs) {
+      // The in-progress round finished; the loop is now user-stopped.
       revealed = stopRevealed;
       status = "stopped";
       stopReason = "user";
-    } else if (stopRevealed < total) {
-      // stop pending: keep revealing up to the boundary, stay running
+    } else {
+      // Stop pending: keep revealing up to the boundary, stay running.
       revealed = Math.min(revealed, stopRevealed);
       status = "running";
       stopReason = null;

@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 /** POST /api/mock/sessions — create a session from a goal (free-interactive). */
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
-  const goal = String(body.goal ?? "").trim();
+  const goal = String(body.goal ?? "").trim().slice(0, 600);
   const userId = String(body.user_id ?? "demo") || "demo";
   if (!goal) {
     return NextResponse.json({ error: "goal required" }, { status: 400 });

@@ -74,7 +74,8 @@ export function buildLoopPlan(
   let stopReason: LoopPlan["stopReason"] = "max_rounds";
 
   for (let r = 0; r < maxRounds; r++) {
-    const ideal = baseline + (ceiling - baseline) * (1 - Math.exp(-(r + 1) * rate));
+    // Round 0 is the baseline sweep (sits at baseline); the climb starts at r=1.
+    const ideal = baseline + (ceiling - baseline) * (1 - Math.exp(-r * rate));
     const noisy = clamp(ideal + gaussian(rng, 0, 0.012), 0, 1);
     const prev = runningBest;
     const best = Math.max(runningBest, noisy); // best metric is a running max

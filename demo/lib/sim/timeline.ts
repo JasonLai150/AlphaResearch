@@ -88,7 +88,7 @@ function streamText(
         parent_job_id: depth === 0 ? null : c.rootId,
         depth,
         type: "token",
-        payload: { msg_id: msgId, delta: tok, final },
+        payload: { msg_id: msgId, delta: tok, final, role: "assistant" },
         ts: "",
       },
     });
@@ -127,7 +127,8 @@ export function buildRunTimeline(scn: Scenario, sid: string): TimedEvent[] {
   scn.strategies.forEach((spec, i) => {
     const jobId = jobIdFor(sid, spec.id);
     const spawnAt = PACE.spawnBaseMs + i * PACE.spawnStaggerMs;
-    subEnv(c, jobId, "spawn", { kind: "research", goal: spec.kind, strategy: spec.blurb }, spawnAt);
+    // kind is the real JobKind enum ("agent"); the strategy name rides `goal`.
+    subEnv(c, jobId, "spawn", { kind: "agent", goal: spec.kind, strategy: spec.blurb }, spawnAt);
     subEnv(c, jobId, "status", { status: "running" }, spawnAt + 400);
 
     const trainStart = spawnAt + PACE.trainStartGapMs;
@@ -138,7 +139,7 @@ export function buildRunTimeline(scn: Scenario, sid: string): TimedEvent[] {
         c,
         jobId,
         "metric",
-        { step: pt.step, reward: pt.reward, loss: pt.loss, efficiency: pt.efficiency },
+        { step: pt.step, reward: pt.reward, series: "eval/reward", loss: pt.loss, efficiency: pt.efficiency },
         at
       );
     });
@@ -166,7 +167,9 @@ export function buildRunTimeline(scn: Scenario, sid: string): TimedEvent[] {
       {
         summary: strategySummary(scn, spec, i),
         metrics: { final_reward: spec.points[n - 1].reward, best_reward: spec.target },
-        reported_status: spec.outcome === "fail" ? "partial" : "done",
+        // The reducer maps "failed" → failed and anything else → done; a genuinely
+        // failed direction must say "failed" (not "partial", which collapses to done).
+        reported_status: spec.outcome === "fail" ? "failed" : "done",
       },
       trainEnd
     );

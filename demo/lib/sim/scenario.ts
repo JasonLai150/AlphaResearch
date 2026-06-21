@@ -125,13 +125,18 @@ function buildCurve(
   const k = outcome === "win" ? 9 : outcome === "plateau" ? 5 : 7;
   const lossStart = 1.1 + rng() * 0.5;
   const lossEnd = 0.08 + rng() * 0.12;
+  // Normalize the logistic so the curve STARTS at the baseline (p=0 → baseline)
+  // and ENDS at the target (p=1 → target) — the plateau the agent is breaking
+  // from is then actually visible at step 0.
+  const denom = logistic(1, mid, k);
+  const ramp0 = logistic(0, mid, k) / denom;
   const pts: CurvePoint[] = [];
   for (let i = 0; i < n; i++) {
     const p = i / (n - 1);
-    const ramp = logistic(p, mid, k) / logistic(1, mid, k);
+    const ramp = (logistic(p, mid, k) / denom - ramp0) / (1 - ramp0);
     let reward = baseline + (target - baseline) * ramp;
-    if (outcome === "fail") reward = baseline + (target - baseline) * 0.25 * ramp;
-    reward = clamp(reward + gaussian(rng, 0, 0.018), 0, 1);
+    if (outcome === "fail") reward = baseline + (target - baseline) * 0.3 * ramp;
+    reward = clamp(reward + gaussian(rng, 0, 0.016), 0, 1);
     const loss = clamp(
       lossStart * Math.exp(-2.4 * p) + lossEnd + gaussian(rng, 0, 0.02),
       0.02,
@@ -164,10 +169,19 @@ export function buildScenario(goal: string, seed: number): Scenario {
 
   const nStrategies = int(rng, 3, 4);
   const templates = sample(rng, LIBRARY, nStrategies);
+  // One shared seed count for the whole sweep, so the lead's "N seeds each" is
+  // truthful and the per-researcher summaries agree.
+  const seeds = [4, 6, 8][int(rng, 0, 2)];
 
-  // Assign outcomes: exactly one winner, the rest climb/plateau, occasionally a fail.
-  const winnerIdx = int(rng, 0, templates.length - 1);
-  const strategies: StrategySpec[] = templates.map((t, i) => {
+  // The winner is the highest-headroom (strongest) direction — so the strategy
+  // the lead ultimately recommends is the one that genuinely separates.
+  let winnerIdx = 0;
+  templates.forEach((t, i) => {
+    if (t.strength > templates[winnerIdx].strength) winnerIdx = i;
+  });
+
+  // First pass: outcome + provisional target per direction.
+  const provisional = templates.map((t, i) => {
     let outcome: Outcome;
     if (i === winnerIdx) outcome = "win";
     else {
@@ -181,8 +195,23 @@ export function buildScenario(goal: string, seed: number): Scenario {
         : outcome === "fail"
           ? clamp(baseline + headroom * 0.3, baseline + 0.02, 0.99)
           : clamp(baseline + headroom * (0.45 + rng() * 0.3), baseline + 0.05, 0.97);
+    return { t, outcome, target };
+  });
+
+  // Enforce that the winner's target clears every other target by a margin wider
+  // than the curve noise (±0.016), so the winner is PROVABLY the best final
+  // reward — the recommendation never contradicts the numbers.
+  const maxOther = Math.max(
+    ...provisional.filter((_, i) => i !== winnerIdx).map((p) => p.target)
+  );
+  provisional[winnerIdx].target = clamp(
+    Math.max(provisional[winnerIdx].target, maxOther + 0.06),
+    baseline + 0.12,
+    0.98
+  );
+
+  const strategies: StrategySpec[] = provisional.map(({ t, outcome, target }) => {
     const steps = [50_000, 75_000, 100_000][int(rng, 0, 2)];
-    const seeds = [4, 6, 8][int(rng, 0, 2)];
     return {
       id: t.id,
       kind: t.kind,

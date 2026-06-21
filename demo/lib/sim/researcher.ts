@@ -63,7 +63,7 @@ function liveProgress(
       revealed += 1;
       if (status === "queued" || status === "pending") status = "running";
     } else if (env.type === "summary") {
-      reportedFailed = String(env.payload.reported_status ?? "").toLowerCase() === "partial";
+      reportedFailed = String(env.payload.reported_status ?? "").toLowerCase() === "failed";
       status = reportedFailed ? "failed" : "done";
     }
   }
@@ -121,10 +121,16 @@ export function researcherDetail(
   const frac = spec.points.length > 0 ? revealed / spec.points.length : 0;
   const logCount = isDone ? allLog.length : Math.max(1, Math.round(allLog.length * frac));
 
+  // The gridworld rollout only makes sense for MiniGrid-style envs — showing a
+  // maze for HalfCheetah/Atari would be a hard visual tell. Other envs get the
+  // reward plot only.
+  const isGridworld = /minigrid|doorkey|multiroom|gridworld/i.test(scn.env);
   const artifacts = isDone
     ? [
         { kind: "plot", url: rewardPlotUri(spec), caption: `${spec.kind} — reward vs. steps` },
-        { kind: "rollout", url: gridworldUri(spec), caption: `${scn.env} — sample rollout` },
+        ...(isGridworld
+          ? [{ kind: "rollout", url: gridworldUri(spec), caption: `${scn.env} — sample rollout` }]
+          : []),
       ]
     : [];
 

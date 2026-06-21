@@ -53,11 +53,12 @@ export function AppShell({ children }: { children: ReactNode }) {
       activeId={null}
       onSelect={(id) => {
         setSidebarOpen(false);
-        router.push(`/?s=${id}`);
+        // The chat console is at /app (/, in this demo, is the marketing landing).
+        router.push(`/app?s=${id}`);
       }}
       onNew={() => {
         setSidebarOpen(false);
-        router.push("/");
+        router.push("/app");
       }}
       loading={loading}
     />
