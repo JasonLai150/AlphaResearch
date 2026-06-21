@@ -43,16 +43,27 @@ function relTime(iso: string): string {
   return `${Math.floor(h / 24)}d`;
 }
 
+function SidebarSkeletonRow() {
+  return (
+    <div className="flex items-center gap-2 rounded-full border border-transparent px-3.5 py-2">
+      <div className="h-3.5 flex-1 animate-pulse rounded-full bg-canvas-soft" />
+      <div className="h-2.5 w-6 shrink-0 animate-pulse rounded-full bg-canvas-soft" />
+    </div>
+  );
+}
+
 export function AppSidebar({
   sessions,
   activeId,
   onSelect,
   onNew,
+  loading = false,
 }: {
   sessions: WireSession[];
   activeId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
+  loading?: boolean;
 }) {
   const { user, clerk } = useAppAuth();
   const [activeNav, setActiveNav] = useState<string>("overview");
@@ -142,13 +153,20 @@ export function AppSidebar({
                 </span>
               </button>
             ))}
-            {!shown.length && (
-              <p className="px-3 py-6 text-center text-[12px] text-mute">
-                {sessions.length
-                  ? `No chats match “${filter}”.`
-                  : "No sessions yet — start one below."}
-              </p>
-            )}
+            {!shown.length &&
+              (loading && !sessions.length ? (
+                <div aria-hidden className="flex flex-col gap-0.5">
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <SidebarSkeletonRow key={i} />
+                  ))}
+                </div>
+              ) : (
+                <p className="px-3 py-6 text-center text-[12px] text-mute">
+                  {sessions.length
+                    ? `No chats match “${filter}”.`
+                    : "No sessions yet — start one below."}
+                </p>
+              ))}
           </div>
         </ScrollArea>
       </div>
@@ -166,6 +184,13 @@ export function AppSidebar({
         </button>
         {clerk ? (
           <div className="flex items-center gap-2.5 rounded-lg px-2 py-1.5">
+            {/*
+              #21: sign-out redirect to "/". In @clerk/nextjs v7 the
+              `afterSignOutUrl` prop was removed from <UserButton> (UserButtonProps
+              no longer accepts it). The redirect is configured at the provider
+              level instead — <ClerkProvider afterSignOutUrl="/"> in app/layout.tsx
+              (owned by another agent).
+            */}
             <UserButton />
             <div className="flex min-w-0 flex-col items-start gap-0.5 leading-tight">
               <span className="line-clamp-1 max-w-[120px] text-[13px]">

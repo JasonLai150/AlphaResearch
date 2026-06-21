@@ -26,7 +26,31 @@ export function emptyState(
     jobs: {},
     order: [],
     transcript: [],
+    seq: 0,
   };
+}
+
+// Bound memory on long-running sessions (#29). Caps are generous enough that
+// the UI never notices; oldest entries are dropped first.
+const MAX_TRANSCRIPT = 2000;
+const MAX_REWARDS = 1000;
+
+/*
+  Append a transcript item with a collision-free id. The id derives from a
+  persistent monotonic `seq` (NOT the array index) so that ids stay unique even
+  after the transcript is capped and earlier items are dropped — and so that a
+  full deterministic replay rebuilds identical ids. The transcript is capped to
+  the most recent MAX_TRANSCRIPT items.
+*/
+function appendTranscript(
+  prev: SessionState,
+  item: Omit<TranscriptItem, "id">
+): SessionState {
+  const seq = prev.seq;
+  const next = [...prev.transcript, { ...item, id: `t${seq}` }];
+  const transcript =
+    next.length > MAX_TRANSCRIPT ? next.slice(next.length - MAX_TRANSCRIPT) : next;
+  return { ...prev, transcript, seq: seq + 1 };
 }
 
 const STATUS_MAP: Record<string, AgentStatus> = {
@@ -48,6 +72,9 @@ export function applyEvent(prev: SessionState, env: EventEnvelope): SessionState
   // Chat transcript rides the bus as `log` events (role + content).
   if (env.type === "log") {
     const role = String(p.role ?? "assistant");
+    // Role mapping: a "tool_use" (agent invoking a tool) and a "tool_result"
+    // (the tool's output) both collapse to the single "tool" transcript role;
+    // user/system pass through; everything else is the assistant.
     const mapped: TranscriptItem["role"] =
       role === "user"
         ? "user"
@@ -56,17 +83,32 @@ export function applyEvent(prev: SessionState, env: EventEnvelope): SessionState
           : role === "tool_use" || role === "tool_result"
             ? "tool"
             : "assistant";
-    const item: TranscriptItem = {
-      id: `t${prev.transcript.length}`,
+    return appendTranscript(prev, {
       role: mapped,
       text: String(p.content ?? ""),
       toolName: (p.tool_name as string) ?? undefined,
-    };
-    return { ...prev, transcript: [...prev.transcript, item] };
+    });
   }
 
+  // An `error` event surfaces as a system transcript line (#13).
+  if (env.type === "error") {
+    return appendTranscript(prev, {
+      role: "system",
+      text: String(p.reason ?? p.message ?? "agent error"),
+    });
+  }
+
+  // Backend / mode may arrive on spawn or status payloads (#27); capture them.
+  let { backend, mode } = prev;
+  if (typeof p.backend === "string") backend = p.backend;
+  if (typeof p.mode === "string") mode = p.mode;
+  const meta = backend !== prev.backend || mode !== prev.mode ? { backend, mode } : null;
+
   const id = env.job_id;
-  if (!id) return prev; // session-level event (e.g. session_cleaned) — no job
+  if (!id) {
+    // Session-level event (e.g. session_cleaned) — no job; still capture meta.
+    return meta ? { ...prev, ...meta } : prev;
+  }
 
   let { rootId, order } = prev;
   let job = prev.jobs[id];
@@ -106,6 +148,10 @@ export function applyEvent(prev: SessionState, env: EventEnvelope): SessionState
         if (i >= 0) job.rewards[i] = { step, reward };
         else job.rewards.push({ step, reward });
         job.rewards.sort((a, b) => a.step - b.step);
+        // Cap to the most recent points to bound memory (#29); drop oldest.
+        if (job.rewards.length > MAX_REWARDS) {
+          job.rewards = job.rewards.slice(job.rewards.length - MAX_REWARDS);
+        }
         job.lastReward = reward;
       }
       if (job.status === "pending" || job.status === "queued") job.status = "running";
@@ -140,7 +186,13 @@ export function applyEvent(prev: SessionState, env: EventEnvelope): SessionState
       break;
   }
 
-  return { ...prev, rootId, order, jobs: { ...prev.jobs, [id]: job } };
+  return {
+    ...prev,
+    ...(meta ?? {}),
+    rootId,
+    order,
+    jobs: { ...prev.jobs, [id]: job },
+  };
 }
 
 // ─── Selectors ───────────────────────────────────────────────────────────────

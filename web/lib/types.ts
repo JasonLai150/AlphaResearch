@@ -5,7 +5,8 @@ export type EventType =
   | "status"
   | "spawn"
   | "artifact"
-  | "summary";
+  | "summary"
+  | "error";
 
 export interface EventEnvelope {
   session_id: string;
@@ -201,6 +202,19 @@ export interface SessionState {
   /** Job ids in first-seen order. */
   order: string[];
   transcript: TranscriptItem[];
+  /**
+   * Monotonic counter for transcript item ids. Derived deterministically from
+   * stream position (incremented per appended item, starting at 0), NOT from a
+   * wall clock — so a full replay rebuilds identical ids even after the
+   * transcript is capped and earlier items are dropped.
+   */
+  seq: number;
+  /** ISO created_at, from fetchFullSession (#27). */
+  startedAt?: string;
+  /** Execution backend, e.g. "local" / "cloud_run_job" (from spawn/status). */
+  backend?: string;
+  /** Session mode, populated from spawn/status payloads when present. */
+  mode?: string;
 }
 
 /** SSE connection lifecycle, surfaced to the UI. */

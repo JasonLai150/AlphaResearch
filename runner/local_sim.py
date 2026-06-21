@@ -218,6 +218,9 @@ async def _guarded_run(sid: str) -> None:
         if root:
             await _emit(sid, root, 0, EventType.status,
                         {"status": "failed", "reason": "local-sim error"})
+            # Surface WHY it failed so the UI can show the cause, not just a spinner stop.
+            await _emit(sid, root, 0, EventType.error,
+                        {"reason": "local-sim error", "message": str(e)})
 
 
 async def _guarded_reply(sid: str, content: str) -> None:
@@ -225,6 +228,11 @@ async def _guarded_reply(sid: str, content: str) -> None:
         await respond_to_message(sid, content)
     except Exception as e:  # noqa: BLE001
         print(f"[local_sim] reply failed for {sid}: {e!r}")
+        root = await store.get_root_job(sid)
+        if root:
+            # Surface WHY the follow-up failed so the UI can show the cause.
+            await _emit(sid, root, 0, EventType.error,
+                        {"reason": "local-sim reply error", "message": str(e)})
 
 
 async def local_sim_loop() -> None:

@@ -1,6 +1,6 @@
 "use client";
 
-import { FolderGit2, GitBranch, GitFork, Server } from "lucide-react";
+import { Clock, Hash, Server, Workflow } from "lucide-react";
 
 import {
   Tooltip,
@@ -10,24 +10,43 @@ import {
 import { cn } from "@/lib/utils";
 import type { RepoContext } from "@/lib/types";
 
-/** The execution-context chip row above the transcript. */
+/** Relative "started X ago" label from an ISO timestamp. */
+function relTime(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(ms / 60000);
+  if (Number.isNaN(m) || m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+/**
+ * The execution-context chip row above the transcript. Chips are built from
+ * REAL session fields (#11), mapped onto RepoContext by the page:
+ *   env → backend · branch → mode · repo → short session id · worktree → startedAt.
+ * Any chip with no real data source is dropped rather than faked.
+ */
 export function ContextBar({ ctx }: { ctx: RepoContext }) {
   const chips = [
-    { icon: Server, label: ctx.env, tip: "Execution target" },
-    { icon: FolderGit2, label: ctx.repo, tip: "Repository" },
-    { icon: GitBranch, label: ctx.branch, tip: "Active branch" },
+    { key: "env", icon: Server, label: ctx.env, tip: "Execution backend" },
+    { key: "mode", icon: Workflow, label: ctx.branch, tip: "Run mode" },
+    { key: "id", icon: Hash, label: ctx.repo, tip: "Session id", muted: true },
     {
-      icon: GitFork,
-      label: ctx.worktree,
-      tip: "Isolated git worktree",
+      key: "started",
+      icon: Clock,
+      label: ctx.worktree ? relTime(ctx.worktree) : "",
+      tip: "Session started",
       muted: true,
     },
-  ];
+  ].filter((c) => c.label);
+
+  if (!chips.length) return null;
 
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-hairline px-4 py-3 md:px-6">
-      {chips.map(({ icon: Icon, label, tip, muted }) => (
-        <Tooltip key={label}>
+      {chips.map(({ key, icon: Icon, label, tip, muted }) => (
+        <Tooltip key={key}>
           <TooltipTrigger asChild>
             <span
               className={cn(

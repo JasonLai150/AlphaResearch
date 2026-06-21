@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ArrowUp, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -18,13 +18,30 @@ export function ChatComposer({
   hint?: string;
 }) {
   const [value, setValue] = useState("");
-  const canSend = value.trim().length > 0 && !busy;
+  const [sending, setSending] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // The composer is busy when the caller says so or while a submit is in flight.
+  const isBusy = busy || sending;
+  const canSend = value.trim().length > 0 && !isBusy;
 
   async function submit() {
-    if (!canSend) return;
     const text = value.trim();
+    if (!text || isBusy) return;
+
+    // Clear optimistically so the field feels instant.
     setValue("");
-    await onSubmit(text);
+    setSending(true);
+    try {
+      await onSubmit(text);
+    } catch {
+      // Restore the text on failure and return focus so the user can retry.
+      setValue(text);
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    } finally {
+      // Always re-enable — the textarea must never be stuck disabled after a reject.
+      setSending(false);
+    }
   }
 
   return (
@@ -37,6 +54,7 @@ export function ChatComposer({
         className="mx-auto flex max-w-3xl items-end gap-2 rounded-lg border border-hairline bg-canvas-soft px-3 py-2 transition-colors focus-within:ring-2 focus-within:ring-ring"
       >
         <textarea
+          ref={textareaRef}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {
@@ -48,7 +66,7 @@ export function ChatComposer({
           rows={1}
           placeholder={placeholder}
           aria-label={placeholder}
-          disabled={busy}
+          disabled={isBusy}
           className="max-h-40 flex-1 resize-none bg-transparent py-1.5 text-sm text-ink placeholder:text-mute focus:outline-none disabled:opacity-60"
         />
         <Button
@@ -58,7 +76,7 @@ export function ChatComposer({
           disabled={!canSend}
           aria-label="Send message"
         >
-          {busy ? (
+          {isBusy ? (
             <Loader2 className="size-4 animate-spin" />
           ) : (
             <ArrowUp className="size-4" />

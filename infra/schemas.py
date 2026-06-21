@@ -39,6 +39,7 @@ class EventType(StrEnum):
     spawn = "spawn"
     artifact = "artifact"
     summary = "summary"
+    error = "error"
 
 
 class Session(BaseModel):

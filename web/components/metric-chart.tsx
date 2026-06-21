@@ -23,11 +23,18 @@ export function RewardChart({
   spark?: boolean;
   color?: string;
 }) {
-  if (!points || points.length < 2) return null;
+  if (!points || points.length === 0) return null;
   const data = points.map((p) => ({
     step: p.step,
     reward: Number(p.reward.toFixed(3)),
   }));
+
+  // A single sample can't form a line on its own; duplicate it so recharts
+  // draws a visible flat segment + dot instead of nothing.
+  if (data.length === 1) {
+    const only = data[0];
+    data.push({ ...only });
+  }
 
   if (spark) {
     return (
