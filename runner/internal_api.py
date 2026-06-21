@@ -55,6 +55,31 @@ def _enforce_session(caller: Caller, session_id: str) -> None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "token does not own this session")
 
 
+# ---- agent bootstrap ---------------------------------------------------
+#
+# The main agent has no shared filesystem with the runner and the user goal is never
+# baked into its container — it fetches its context here on boot (token -> session).
+# `mode` lets a future conversational flow refine the goal over turns before dispatch;
+# for now it's always "oneshot". Designed to grow into returning the conversation.
+
+@router.get("/bootstrap", include_in_schema=False)
+async def get_bootstrap(caller: Caller = Depends(require_caller)) -> dict:
+    sid = caller.session_id
+    if sid is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "bootstrap requires a session-bound token")
+    doc = await store.get_redis().json().get(store._session_key(sid))
+    if not doc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown session")
+    return {
+        "session_id": sid,
+        "root_job_id": doc.get("root_job_id"),
+        "goal": doc.get("goal", ""),
+        "mode": doc.get("mode", "oneshot"),
+        "depth": 0,
+    }
+
+
 # ---- request bodies ----------------------------------------------------
 
 class EventIn(BaseModel):

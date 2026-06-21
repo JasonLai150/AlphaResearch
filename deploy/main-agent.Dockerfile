@@ -61,6 +61,7 @@ COPY agent/main-agent/ ./
 # missing-parent.
 RUN mkdir -p ./.dispatched ./meta-planning
 
-# `claude --dangerously-skip-permissions` is the canonical entrypoint per
-# agent/main-agent/CLAUDE.md. ANTHROPIC_API_KEY MUST be provided at run time.
-ENTRYPOINT ["claude", "--dangerously-skip-permissions"]
+# Headless launcher: Cloud Run Jobs have no TTY, so we can't use the interactive
+# `claude` REPL. launch.py fetches the goal from GET /internal/bootstrap and execs
+# `claude -p`. ANTHROPIC_API_KEY + ALPHA_INTERNAL_{TOKEN,RUNNER_URL} MUST be set at run time.
+ENTRYPOINT ["python3", "launch.py"]

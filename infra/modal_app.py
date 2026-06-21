@@ -101,8 +101,10 @@ def sub_agent(
     if internal_runner_url:
         env["ALPHA_INTERNAL_RUNNER_URL"] = internal_runner_url
 
-    subprocess.run(["claude", "--dangerously-skip-permissions"], cwd="/workspace",
-                   env=env, check=False)
+    # Same headless launcher the sub-agent Dockerfile ENTRYPOINT uses (Modal overrides
+    # the image entrypoint, so we invoke it explicitly): builds the prompt from the
+    # dispatch record and execs `claude -p`.
+    subprocess.run(["python3", "launch.py"], cwd="/workspace", env=env, check=False)
 
     # Flush result.json + .done sentinel + artifacts back to the volume so the
     # runner's reconcile loop can read them.

@@ -88,6 +88,44 @@ async def test_bad_event_type_422(client, fake_redis):
     assert r.status_code == 422
 
 
+# ---- bootstrap ---------------------------------------------------------
+
+async def test_bootstrap_requires_auth(client):
+    r = await client.get("/internal/bootstrap")
+    assert r.status_code == 401
+
+
+async def test_bootstrap_returns_goal_and_mode(client, fake_redis):
+    await store.create_session("s_a", "u_1", "improve DoorKey sample efficiency", 100)
+    # root_job_id is stamped on the session doc by POST /sessions; mirror that here.
+    await fake_redis.json().set(store._session_key("s_a"), "$.root_job_id", "j_root")
+    tok = await store.mint_agent_token("s_a")
+    r = await client.get("/internal/bootstrap", headers=_bearer(tok))
+    assert r.status_code == 200
+    body = r.json()
+    assert body["session_id"] == "s_a"
+    assert body["goal"] == "improve DoorKey sample efficiency"
+    assert body["mode"] == "oneshot"
+    assert body["root_job_id"] == "j_root"
+    assert body["depth"] == 0
+
+
+async def test_bootstrap_rejects_cross_session_isolation(client, fake_redis):
+    """A token for s_b returns s_b's (empty) context, never s_a's goal."""
+    await store.create_session("s_a", "u_1", "secret goal A", 100)
+    tok_b = await store.mint_agent_token("s_b")
+    r = await client.get("/internal/bootstrap", headers=_bearer(tok_b))
+    # s_b has no session doc → 404 (not a leak of s_a)
+    assert r.status_code == 404
+
+
+async def test_bootstrap_unbound_token_400(client, fake_redis, monkeypatch):
+    from infra.config import settings
+    monkeypatch.setattr(settings, "internal_token_fallback", True)
+    r = await client.get("/internal/bootstrap", headers=_bearer(settings.internal_token))
+    assert r.status_code == 400  # shared dev token isn't session-bound
+
+
 # ---- dispatch ----------------------------------------------------------
 
 async def _seed_parent(sid="s_a", jid="j_root", depth=0):

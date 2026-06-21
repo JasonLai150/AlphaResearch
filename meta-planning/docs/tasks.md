@@ -37,11 +37,21 @@ See `docs/backend-mvp-notes.md` for the full SEV-fix map + the one remaining gap
 - [ ] Modal app deployed — NOT deployed (`modal deploy infra/modal_app.py` pending; needs secrets)
 - [ ] Cloud Run deployed — scripts ready but not yet run against the project (APIs were disabled)
 
-## Remaining milestones
-- [~] **M3/M4 — real depth-0 + sub-agent round-trip**: implemented + mock-tested (`test_e2e_smoke`),
-      NOT verified on real cloud. **Blocker:** runner↔Modal-volume bridge — Cloud Run can't mount a
-      Modal Volume, so sub-agent results won't return until `reload_volume()` hydrates via the Modal
-      SDK, or sub-agents push results to a new `/internal/result` (see `docs/backend-mvp-notes.md`).
+## Cloud bring-up — DONE (2026-06-21)
+- [x] GCP bootstrap run live (APIs, AR repo, bucket, 3 SAs+IAM, secrets)
+- [x] Modal deployed (`sub_agent` + `run_job`), py3.11 (envpool cp311) — green
+- [x] Cloud Run deployed: service `alpha-api` (`…ziyr677nma-uc.a.run.app`) + job `alpha-main-agent`
+- [x] Backbone proven live: `POST /sessions` → runner → real Cloud Run Job spawn → Redis state
+
+## Path to v1 e2e — two PRs (see `v1-rollout.md` for full detail)
+Found: agents spawn but **idle** (interactive `claude`, no goal in container); and the
+Modal volume is broken **both** directions (dispatch out + result back), not just return.
+- [ ] **PR1 `feat/headless-agents`** — `GET /internal/bootstrap` (goal+mode) · entrypoint
+      wrappers running `claude -p` · Dockerfile/modal entrypoints · CLAUDE.md mode gate.
+      Designed for the conversational-goal future (bootstrap returns `mode`).
+- [ ] **PR2 `feat/two-way-push`** — dispatch record as Modal arg · `POST /internal/result`
+      (base64 artifacts → GCS) · reconcile reads Redis · retire the Modal Volume.
+- [~] **M3/M4 round-trip** superseded by PR1+PR2 (the volume bridge is removed, not hydrated).
 - [ ] **M5 — real RL training**: `run_experiment_real` still delegates to the synthetic stub; add a
       short minigrid+PPO loop (lazy torch/sb3) and the deps to the Modal image.
 - [ ] **M6 — web UI live demo**: plot `JobNode.rewards` (recharts), real parent/child tree via

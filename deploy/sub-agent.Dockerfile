@@ -75,4 +75,7 @@ COPY agent/sub-agent/ ./
 
 RUN mkdir -p ./artifacts
 
-ENTRYPOINT ["claude", "--dangerously-skip-permissions"]
+# Headless launcher (no TTY in the sandbox): builds the one-shot prompt from the
+# dispatch record and execs `claude -p`. The Modal sub_agent function overrides this
+# entrypoint but runs the same launch.py — keep them in sync.
+ENTRYPOINT ["python3", "launch.py"]

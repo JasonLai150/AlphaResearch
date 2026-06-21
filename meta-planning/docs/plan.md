@@ -14,6 +14,12 @@ internal HTTP API. **Redis** = state + event bus + queue + budget (single source
 **GCS** = artifacts; sub-agents share a per-session **Modal Volume** with the runner. SSE = a
 pure Redis Stream tailer.
 
+## Status (2026-06-21)
+- Infra **deployed + backbone proven live**: `POST /sessions` → runner → real Cloud Run Job
+  spawn → Redis (GCP+Modal+Cloud Run all up). Two code gaps remain for an e2e run.
+- Next = **PR1 headless agents** (bootstrap endpoint + `claude -p`) then **PR2 two-way push**
+  (remove the Modal Volume). Detail in [`v1-rollout.md`](./v1-rollout.md).
+
 ## Status (2026-06-20, audited)
 - Infra seam + store + guardrails + local backend: working, **verified live** (`smoke_infra`).
 - **Redis Cloud** seam verified live. **Modal+GCS** round-trip verified *once* @`ed90b69` but not

@@ -102,9 +102,11 @@ async def ping() -> bool:
 
 # ---- sessions -----------------------------------------------------------
 
-async def create_session(session_id: str, user_id: str, goal: str, budget: int) -> Session:
+async def create_session(
+    session_id: str, user_id: str, goal: str, budget: int, mode: str = "oneshot"
+) -> Session:
     r = get_redis()
-    s = Session(id=session_id, user_id=user_id, goal=goal)
+    s = Session(id=session_id, user_id=user_id, goal=goal, mode=mode)
     await r.json().set(_session_key(session_id), "$", s.model_dump())
     await r.set(_budget_key(session_id), int(budget))
     return s
