@@ -299,3 +299,47 @@ describe("selectors", () => {
     expect(subagentsOf(emptyState(SESSION))).toEqual([]);
   });
 });
+
+// ─── (h) token events coalesce into one streaming assistant item ─────────────
+
+describe("token events → coalesced typewriter transcript item", () => {
+  it("grows one assistant item by msg_id and clears streaming on final", () => {
+    const events: EventEnvelope[] = [
+      env({ type: "token", job_id: "root", payload: { msg_id: "m1#0", role: "assistant", delta: "Hel", final: false } }),
+      env({ type: "token", job_id: "root", payload: { msg_id: "m1#0", role: "assistant", delta: "lo ", final: false } }),
+      env({ type: "token", job_id: "root", payload: { msg_id: "m1#0", role: "assistant", delta: "world", final: true } }),
+    ];
+    const state = reduce(events);
+    // One transcript item, not three; full text assembled; no phantom job.
+    expect(state.transcript).toHaveLength(1);
+    expect(state.transcript[0].role).toBe("assistant");
+    expect(state.transcript[0].text).toBe("Hello world");
+    expect(state.transcript[0].streaming).toBe(false);
+    expect(state.transcript[0].msgId).toBe("m1#0");
+    expect(state.order).toEqual([]); // token events never create jobs
+  });
+
+  it("keeps streaming true while deltas are mid-flight", () => {
+    const state = reduce([
+      env({ type: "token", job_id: "root", payload: { msg_id: "m2#0", role: "assistant", delta: "typing", final: false } }),
+    ]);
+    expect(state.transcript[0].streaming).toBe(true);
+  });
+
+  it("separates distinct msg_ids into distinct items", () => {
+    const state = reduce([
+      env({ type: "token", job_id: "root", payload: { msg_id: "m1#0", delta: "a", final: true } }),
+      env({ type: "token", job_id: "root", payload: { msg_id: "m2#0", delta: "b", final: true } }),
+    ]);
+    expect(state.transcript.map((t) => t.text)).toEqual(["a", "b"]);
+    expect(state.transcript.map((t) => t.id)).toEqual(["t0", "t1"]);
+  });
+
+  it("replaying the full token stream yields identical state (idempotent)", () => {
+    const events: EventEnvelope[] = [
+      env({ type: "token", job_id: "root", payload: { msg_id: "m1#0", delta: "one ", final: false } }),
+      env({ type: "token", job_id: "root", payload: { msg_id: "m1#0", delta: "two", final: true } }),
+    ];
+    expect(reduce(events)).toEqual(reduce(events));
+  });
+});

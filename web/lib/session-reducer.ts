@@ -90,6 +90,32 @@ export function applyEvent(prev: SessionState, env: EventEnvelope): SessionState
     });
   }
 
+  // Streaming assistant text: coalesce token deltas into one growing item,
+  // keyed by a stable msg_id. Append-only + keyed => idempotent under SSE
+  // replay-from-0 and reconnect-resume. Handled here (before job logic) so a
+  // token event never creates a phantom job.
+  if (env.type === "token") {
+    const msgId = String(p.msg_id ?? "");
+    const delta = String(p.delta ?? "");
+    const final = Boolean(p.final);
+    const i = prev.transcript.findIndex((t) => t.msgId === msgId);
+    if (i >= 0) {
+      const transcript = prev.transcript.slice();
+      transcript[i] = {
+        ...transcript[i],
+        text: transcript[i].text + delta,
+        streaming: !final,
+      };
+      return { ...prev, transcript };
+    }
+    return appendTranscript(prev, {
+      role: "assistant",
+      text: delta,
+      msgId,
+      streaming: !final,
+    });
+  }
+
   // An `error` event surfaces as a system transcript line (#13).
   if (env.type === "error") {
     return appendTranscript(prev, {
