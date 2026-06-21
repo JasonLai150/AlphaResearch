@@ -88,6 +88,16 @@ RUN uv pip install --system --no-cache \
         --index-url https://download.pytorch.org/whl/cpu \
         "torch"
 
+# wandb run logging + the Browserbase/Stagehand smart agent for deterministic
+# screenshots of THIS sub-agent's live wandb run (scripts/capture_wandb.py).
+# playwright is used only as a CDP client to the REMOTE Browserbase browser, so we
+# install the package but NOT the local Chromium binaries (no `playwright install`).
+RUN uv pip install --system --no-cache \
+        "wandb" \
+        "browserbase" \
+        "playwright" \
+        "stagehand"
+
 WORKDIR /workspace
 COPY agent/sub-agent/ ./
 

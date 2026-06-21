@@ -123,6 +123,36 @@ URLs to your result.
 the main agent will combine them across siblings. Lying about results poisons
 the whole session.
 
+## Weights & Biases: log + screenshot YOUR run
+
+You may be one of many sub-agents running at once, so your wandb run must be
+**uniquely and deterministically yours** — otherwise a screenshot could grab a
+sibling's graph. Two steps, both already wired:
+
+1. **Start your run via the helper** (pins the run id to your job id so the URL is
+   knowable and collision-free):
+
+   ```python
+   import sys; sys.path.insert(0, "scripts")
+   from wandb_run import init_wandb
+   run = init_wandb(config={...})      # id=$ALPHA_JOB_ID, entity=$WANDB_ENTITY, project=alpha-<session>
+   # ... log metrics with wandb.log(...) as usual ...
+   ```
+   (If you adapt the CleanRL references, set `WANDB_RUN_ID=$ALPHA_JOB_ID` before
+   `wandb.init`, or call `init_wandb()` instead, so the id is pinned.)
+
+2. **Once your run has logged some metrics, screenshot it** — one Bash call, no URL
+   needed (it derives YOUR run URL from the job id, never a sibling's):
+
+   ```bash
+   python3 scripts/capture_wandb.py
+   ```
+   This drops `wandb_run.png` (+ a best-effort `wandb_summary.json` from the
+   Browserbase smart agent) into `/workspace/.dispatched/artifacts/${ALPHA_JOB_ID}/`,
+   which the Stop hook base64-POSTs to `/internal/result` → GCS → back to the main
+   agent automatically. List the PNG in your `result.json` `artifacts`. Capture AFTER
+   metrics exist (an empty run page has no charts).
+
 ## Hard rules
 
 - Never modify `plan.base_hparams`, `plan.reward_fn_spec`, `plan.env_id`,
