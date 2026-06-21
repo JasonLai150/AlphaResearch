@@ -20,6 +20,9 @@
 - [x] `agent/sub-agent/` (minimal): CLAUDE.md + `.claude/settings.json` (Web* denied) + `validated-findings` skill
 - [ ] Dockerfiles + entrypoints (`claude --dangerously-skip-permissions`) for both containers
 - [ ] Runner: watch `.dispatched/*.json` → spawn sub-agent container → write `<job_id>.result.json`
+- [x] Rewire infra to runner handoff: removed deleted-`run_agent` imports; API enqueues
+      `sessions:queue`; dispatch/modal run experiment-only; worker/run_depth0 are seams
+      (imports green, ruff clean, `smoke_infra` passes)
 
 ## Next
 - [ ] Full depth-0 Claude agent loop over Modal (`scripts/run_depth0.py`)
