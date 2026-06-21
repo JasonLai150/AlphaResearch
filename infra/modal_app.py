@@ -21,6 +21,8 @@ import subprocess
 
 import modal
 
+from infra.config import settings
+
 APP_NAME = "alpharesearch"
 
 # Prebaked experiment image (synthetic-experiment deps; heavy ML stack added later).
@@ -117,11 +119,16 @@ def warmup() -> str:
     memory=8192,
     scaledown_window=300,
     enable_memory_snapshot=True,
-    # Demo: keep ONE container always warm so the first chat skips the image
-    # pull + snapshot-restore cold start. Concurrent fan-out beyond 1 still cold-starts;
-    # raise to the demo's idea-count for all-instant (at idle cost). Scale to 0 after the
-    # demo by removing this. The post-deploy warm-up spawn (deploy_modal.sh) primes the snapshot.
-    min_containers=1,
+    # Standing warm pool (ALPHA_SUBAGENT_WARM_POOL, default 1): keep this many
+    # containers always warm so dispatches skip the image-pull cold start. A fan-out
+    # cold-starts every idea beyond the pool size, so set the env to the demo's
+    # fan-out size (max_fanout) for an all-warm fan-out, or 0 after the demo to drop
+    # idle cost to zero. Read at deploy time. The post-deploy warm-up spawn
+    # (deploy_modal.sh) primes the snapshot. NOTE: enable_memory_snapshot restores only
+    # THIS function's (light) init — the heavy torch/envpool import runs in the
+    # claude->train_ppo.py child subprocess and is NOT snapshotted; a hot page cache
+    # from this warm pool is what actually speeds that child import.
+    min_containers=settings.subagent_warm_pool,
 )
 def sub_agent(
     job_id: str,
