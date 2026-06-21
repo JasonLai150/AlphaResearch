@@ -196,7 +196,8 @@ async def test_reconcile_skips_job_that_transitioned(fake_redis):
 
 # ---- SEV-6 terminal-session cleanup ------------------------------------
 
-async def test_cleanup_terminal_session_once(fake_redis):
+async def test_cleanup_terminal_session_once(fake_redis, monkeypatch):
+    monkeypatch.setattr(loops, "CLEANUP_GRACE_SECONDS", 0)  # skip the grace window in test
     await _seed_session()
     await _seed_root(status=JobStatus.done, sandbox_id="exec_1", backend="cloud_run_job")
     tok = await store.mint_agent_token("s_a")
@@ -206,6 +207,39 @@ async def test_cleanup_terminal_session_once(fake_redis):
         await loops._cleanup_terminal_sessions()  # second pass: already cleaned
     delvol.assert_awaited_once_with("s_a")
     assert await store.resolve_agent_token(tok) is None  # token revoked
+
+
+async def test_cleanup_respects_grace_window(fake_redis, monkeypatch):
+    """First terminal pass only STAMPS; the irreversible cleanup waits out the grace."""
+    monkeypatch.setattr(loops, "CLEANUP_GRACE_SECONDS", 9999)
+    await _seed_session()
+    await _seed_root(status=JobStatus.done, sandbox_id="exec_1", backend="cloud_run_job")
+    delvol = AsyncMock()
+    with patch("runner.loops.delete_session_volume", delvol):
+        await loops._cleanup_terminal_sessions()
+    delvol.assert_not_awaited()  # within grace -> not yet
+
+
+async def test_reconcile_honors_subagent_self_reported_failure(fake_redis):
+    """SEV: a sub-agent that exits cleanly but reports status='failed' must be
+    recorded as failed, not masked as a successful done."""
+    await _seed_session()
+    await store.create_job(Job(id="j_c", session_id="s_a", parent_job_id="j_root", depth=1,
+                               status=JobStatus.running, sandbox_id="sb_c", backend="modal"))
+    rp, _ = modal_client.results_for("s_a", "j_c")
+    rp.parent.mkdir(parents=True, exist_ok=True)
+    rp.write_text(json.dumps({"job_id": "j_c", "status": "failed",
+                              "summary": "diverged; no improvement", "metrics": {}}))
+    modal_client.result_done_sentinel("s_a", "j_c").write_text("done")
+    with patch("runner.loops.poll_modal_call", AsyncMock(return_value="done")), \
+         patch("runner.loops.reload_volume", AsyncMock()), \
+         patch("runner.loops.upload_artifacts", AsyncMock(return_value=[])), \
+         patch("runner.loops.delete_session_volume", AsyncMock()):
+        await loops._reconcile_once()
+    j = await store.get_job("j_c")
+    assert j.status == JobStatus.failed
+    run = await store.get_run("j_c")
+    assert run.status == "failed" and "diverged" in run.summary
 
 
 async def test_cleanup_skips_session_with_running_job(fake_redis):

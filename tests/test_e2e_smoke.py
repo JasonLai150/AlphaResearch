@@ -28,14 +28,12 @@ async def client(fake_redis):
         yield c
 
 
-def _mock_storage():
-    ms = MagicMock()
+def _mock_client():
     client = MagicMock()
     bucket = MagicMock()
-    ms.Client.return_value = client
     client.bucket.return_value = bucket
     bucket.blob.return_value = MagicMock()
-    return ms
+    return client
 
 
 async def test_end_to_end_session_dispatch_reconcile(client, fake_redis):
@@ -92,7 +90,7 @@ async def test_end_to_end_session_dispatch_reconcile(client, fake_redis):
          patch("runner.loops.poll_cloud_run_exec", AsyncMock(return_value="running")), \
          patch("runner.loops.reload_volume", AsyncMock()), \
          patch("runner.loops.delete_session_volume", AsyncMock()), \
-         patch("runner.gcs_uploader.storage", _mock_storage()):
+         patch("infra.store._gcs_client", _mock_client):
         await loops._reconcile_once()
 
     assert (await store.get_job("j_c")).status.value == "done"

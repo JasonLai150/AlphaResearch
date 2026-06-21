@@ -1,6 +1,6 @@
 ---
 name: dispatch-subagents
-description: Use IMMEDIATELY after the research skill writes ./.dispatched/plan.json, to fan out one sub-agent container per idea. Invokes scripts/dispatch_subagent.py via Bash (one call per idea), then waits for RunResult JSON files in ./.dispatched/, then synthesizes. Invoke also when re-dispatching a subset after a synthesis pass.
+description: Use IMMEDIATELY after the research skill writes ./.dispatched/plan.json, to fan out one sub-agent container per idea. Invokes scripts/dispatch_subagent.py via Bash (one call per idea), then polls children over HTTP with scripts/check_children.py / wait_for_children.py, then synthesizes. Invoke also when re-dispatching a subset after a synthesis pass.
 ---
 
 # Dispatch Subagents Skill
@@ -24,11 +24,12 @@ Exit codes:
 - `1` — bad args or filesystem error
 - `2` — schema or consistency validation failed (reason on stderr)
 
-On success, the script writes the dispatch record to
-`./.dispatched/<job_id>.json`. The runner (outside this container) watches
-that directory, spawns a sub-agent container for each new record, mounts the
-record at `/workspace/job.json` inside the sub-agent, and writes the
-sub-agent's RunResult back to `./.dispatched/<job_id>.result.json`.
+On success, the script writes a local audit copy to `./.dispatched/<job_id>.json`
+AND POSTs the dispatch record to the runner's `/internal/dispatch`. The runner
+(outside this container — you do NOT share a filesystem with it or with the
+sub-agents) registers the job, spawns a sub-agent, mounts the record into the
+sub-agent's volume, and collects its RunResult. You observe results over HTTP via
+the helper scripts below — not by reading local files.
 
 ## Procedure
 
@@ -55,18 +56,19 @@ sub-agent's RunResult back to `./.dispatched/<job_id>.result.json`.
      same idea twice. Skip it.
    - Exit 1 = filesystem/arg issue; fix the path or the script call.
 
-4. **Wait for RunResults**. The runner writes
-   `./.dispatched/<job_id>.result.json` for each completed sub-agent. Poll:
+4. **Wait for RunResults over HTTP** (no shared filesystem). Use the helper
+   scripts, which query the runner's internal API:
 
    ```bash
-   ls ./.dispatched/*.result.json 2>/dev/null
+   python3 scripts/check_children.py                  # <jid> <status> <summary> per child
+   python3 scripts/wait_for_children.py j_a j_b        # block until those are terminal
+   python3 scripts/read_artifacts.py j_a               # a child's artifact refs (gs:// urls)
    ```
 
-   The RunResult JSON shape is the sub-agent's responsibility (see
-   `agent/sub-agent/CLAUDE.md`), but at minimum contains
-   `{job_id, idea_id, status, summary, metrics}`.
+   Each child's status is `running | done | failed`; `done` rows carry the
+   sub-agent's summary. Don't poll faster than ~5s.
 
-5. **Synthesize.** Read each `*.result.json`. Rank by `plan.target_metric`.
+5. **Synthesize.** Once children are terminal, rank by `plan.target_metric`.
    Write a 10-30 line synthesis covering:
    - Which ideas moved the metric, by how much, vs the baseline encoded in
      `plan.base_hparams`.

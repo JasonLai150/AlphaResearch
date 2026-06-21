@@ -1,4 +1,5 @@
-"""GCS uploader — storage client mocked. SEV-10: deterministic, idempotent ids."""
+"""GCS uploader — credential client mocked. SEV-10: deterministic, idempotent ids;
+and it must go through the shared store._gcs_client credential path."""
 
 from __future__ import annotations
 
@@ -12,15 +13,12 @@ from runner.gcs_uploader import upload_artifacts
 pytestmark = pytest.mark.asyncio
 
 
-def _mock_storage():
-    mock_storage = MagicMock()
+def _mock_client():
     client = MagicMock()
     bucket = MagicMock()
-    blob = MagicMock()
-    mock_storage.Client.return_value = client
     client.bucket.return_value = bucket
-    bucket.blob.return_value = blob
-    return mock_storage
+    bucket.blob.return_value = MagicMock()
+    return client
 
 
 async def test_uploads_each_file_with_deterministic_ids(fake_redis, tmp_path):
@@ -29,7 +27,7 @@ async def test_uploads_each_file_with_deterministic_ids(fake_redis, tmp_path):
     (art / "loss.png").write_bytes(b"\x89PNGfake")
     (art / "metrics.json").write_bytes(b'{"r": 0.5}')
 
-    with patch("runner.gcs_uploader.storage", _mock_storage()):
+    with patch("infra.store._gcs_client", _mock_client):
         refs = await upload_artifacts("s_a", "j_1", art)
 
     assert len(refs) == 2
@@ -47,7 +45,7 @@ async def test_idempotent_reupload(fake_redis, tmp_path):
     art = tmp_path / "artifacts" / "j_1"
     art.mkdir(parents=True)
     (art / "loss.png").write_bytes(b"PNG")
-    with patch("runner.gcs_uploader.storage", _mock_storage()):
+    with patch("infra.store._gcs_client", _mock_client):
         await upload_artifacts("s_a", "j_1", art)
         await upload_artifacts("s_a", "j_1", art)  # reconcile retry
     listed = await store.list_artifacts_for("j_1")

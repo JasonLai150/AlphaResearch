@@ -144,9 +144,12 @@ async def reload_volume(sid: str) -> None:
 
 async def delete_session_volume(sid: str) -> None:
     """Reclaim a per-session volume once the whole session is terminal (SEV-6:
-    avoid the unbounded Modal Volume leak / quota cap). Also revokes the token."""
+    avoid the unbounded Modal Volume leak / quota cap). Offloaded to a thread —
+    Volume.delete() is blocking and must not stall the runner's event loop."""
+    import asyncio
     try:
         modal = _modal()
-        modal.Volume.from_name(session_volume_name(sid)).delete()
+        vol = modal.Volume.from_name(session_volume_name(sid))
+        await asyncio.to_thread(vol.delete)
     except Exception:
         pass

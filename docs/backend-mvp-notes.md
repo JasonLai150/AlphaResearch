@@ -13,6 +13,18 @@ the Cloud Run revision as authoritative:
 - **There is no `volume_watch_loop`.** Child jobs are registered via the internal API, not by scanning
   a shared volume. Several plan-body unit tests were adapted to this arch.
 
+## Final adversarial review — outcome
+
+Two adversarial review passes ran (midpoint + final). **Fixed and committed** from the final
+pass: the critical `parent_job_id="root"` default → now `$ALPHA_JOB_ID` (dispatch would have
+404'd in prod); `_finalize_done` now honors a sub-agent's self-reported `status:"failed"` instead
+of masking it as done; `gcs_uploader` now uses the shared SA-key credential path (was bare ADC →
+403 on Cloud Run); atomic spawn-commit (`store.mark_job_running`, no queued-with-live-sandbox
+window); graceful main-agent success no longer cancels running children; terminal-session cleanup
+has a grace window before revoking the token; `set_job_status` guards job existence (no real-Redis
+index drift); async `delete_session_volume`; doc contradictions fixed. **The one finding left as a
+design decision is the volume bridge below** (the #1/#2/#3 criticals all point at it).
+
 ## ⚠️ KNOWN GAP (must address before real cloud runs): runner ↔ Modal volume access
 
 The reconcile loop reads a finished sub-agent's `result.json` / `.done` sentinel / artifacts from a

@@ -10,8 +10,6 @@ from __future__ import annotations
 import mimetypes
 from pathlib import Path
 
-from google.cloud import storage  # patched in tests; never hit in CI
-
 from infra import store
 from infra.config import settings
 from infra.schemas import ArtifactRef
@@ -31,7 +29,7 @@ def _kind_for(p: Path) -> str:
 async def upload_artifacts(session_id: str, job_id: str, local_dir: Path) -> list[ArtifactRef]:
     if not local_dir.exists():
         return []
-    client = storage.Client()
+    client = store._gcs_client()  # shared credential path (uses the injected SA key)
     bucket_name = settings.gcs_bucket or "alpha-test"
     bucket = client.bucket(bucket_name)
     r = store.get_redis()

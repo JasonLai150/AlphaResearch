@@ -171,6 +171,31 @@ def test_dispatch_posts_to_runner(recorder, tmp_path):
     assert (out_dir / f"{job_id}.json").exists()
 
 
+def test_parent_job_id_defaults_to_alpha_job_id(recorder, tmp_path):
+    """Regression: with NO --parent-job-id (the real main-agent invocation), the
+    parent must default to $ALPHA_JOB_ID — the runner-injected root id — not the
+    literal 'root' (which would 404 at /internal/dispatch)."""
+    server, base_url = recorder
+    plan_path = _write_plan(tmp_path)
+    out_dir = tmp_path / "dispatched"
+    env = os.environ.copy()
+    env.update({
+        "ALPHA_INTERNAL_RUNNER_URL": base_url,
+        "ALPHA_INTERNAL_TOKEN": "tok",
+        "ALPHA_SESSION_ID": "s_x",
+        "ALPHA_JOB_ID": "j_realroot",
+        "ALPHA_DEPTH": "0",
+    })
+    result = subprocess.run(
+        [sys.executable, str(_SCRIPT), "--plan", str(plan_path),
+         "--idea-id", "idea_beta", "--out-dir", str(out_dir)],  # NO --parent-job-id
+        capture_output=True, text=True, env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    posted = json.loads(server.last_body.decode("utf-8"))
+    assert posted["parent_job_id"] == "j_realroot"
+
+
 def test_dispatch_local_only_no_post(tmp_path):
     """With ALPHA_INTERNAL_RUNNER_URL unset, the script still succeeds and writes
     the audit file, but performs no HTTP push."""

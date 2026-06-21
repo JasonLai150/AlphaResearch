@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 
 from infra import store
 from infra.schemas import EventEnvelope, EventType, JobStatus, RunResult
@@ -41,6 +42,7 @@ from runner.modal_client import (
 POLL_INTERVAL = 2.0
 RECONCILE_INTERVAL = 5.0
 LEADERSHIP_INTERVAL = 5.0
+CLEANUP_GRACE_SECONDS = 60.0  # wait this long after a session goes terminal before reclaiming
 
 _TERMINAL = {JobStatus.done, JobStatus.failed, JobStatus.cancelled}
 _SPAWNABLE = {JobStatus.pending, JobStatus.queued}
@@ -121,8 +123,9 @@ async def _consume_sessions_once() -> None:
         except Exception as e:  # noqa: BLE001
             print(f"[session_loop] spawn failed for {root_id}: {e!r}")
             continue
-        await store.update_job(root_id, sandbox_id=sandbox_id, backend="cloud_run_job")
-        await store.set_job_status(root_id, JobStatus.running)
+        # Atomic: status+sandbox_id+backend in one txn so a crash never strands the
+        # job as queued-with-a-live-sandbox.
+        await store.mark_job_running(root_id, sandbox_id, "cloud_run_job")
         await _emit(sid, root_id, 0, EventType.status, {"status": "running", "sandbox": sandbox_id})
         await r.xdel(store.SESSIONS_QUEUE, entry_id)  # SEV-1: xdel only after success
 
@@ -143,8 +146,7 @@ async def _consume_dispatches_once() -> None:
         except Exception as e:  # noqa: BLE001
             print(f"[dispatch_loop] spawn failed for {jid}: {e!r}")
             continue
-        await store.update_job(jid, sandbox_id=sandbox_id, backend="modal")
-        await store.set_job_status(jid, JobStatus.running)
+        await store.mark_job_running(jid, sandbox_id, "modal")  # atomic stamp (see above)
         await _emit(job.session_id, jid, job.depth, EventType.spawn,
                     {"sandbox": sandbox_id, "kind": job.kind.value})
         await r.xdel(store.DISPATCH_QUEUE, entry_id)  # SEV-1
@@ -159,10 +161,11 @@ async def _poll(job) -> str:
 
 
 async def _finalize_done(job) -> None:
+    """The sandbox finished. For a sub-agent, honor its self-reported status from
+    result.json (a sub-agent that exited cleanly but reports status='failed' must NOT
+    be recorded as a success). The main agent (depth 0) has no structured result."""
     sid, jid = job.session_id, job.id
-    summary, metrics = "", {}
-    # Sub-agents (depth>=1) leave a structured RunResult in the volume; the main
-    # agent (depth 0) has none — its "result" is the chat transcript.
+    summary, metrics, reported = "", {}, "done"
     if job.depth >= 1:
         await reload_volume(sid)
         result_path, _ = results_for(sid, jid)
@@ -172,18 +175,27 @@ async def _finalize_done(job) -> None:
             return
         try:
             payload = json.loads(result_path.read_text())
-            summary = payload.get("summary", "")
-            metrics = payload.get("metrics", {}) or {}
         except (json.JSONDecodeError, OSError):
             await _finalize_failed(job, reason="result.json present but unreadable/invalid")
             return
+        summary = payload.get("summary", "")
+        metrics = payload.get("metrics", {}) or {}
+        reported = (payload.get("status") or "done").lower()
 
     artifacts = await upload_artifacts(sid, jid, artifacts_dir(sid, jid))  # SEV-10 idempotent
-    await store.write_run(RunResult(job_id=jid, status="done", summary=summary, metrics=metrics))
-    await store.set_job_status(jid, JobStatus.done)
+    failed = reported == "failed"
+    run_status = "failed" if failed else reported  # done | partial | failed
+    job_status = JobStatus.failed if failed else JobStatus.done
+    await store.write_run(
+        RunResult(job_id=jid, status=run_status, summary=summary, metrics=metrics))
+    await store.set_job_status(jid, job_status)
     await _emit(sid, jid, job.depth, EventType.summary,
-                {"summary": summary[:240], "metrics": metrics, "artifact_count": len(artifacts)})
-    await _cancel_orphans_if_terminal(job)
+                {"summary": summary[:240], "metrics": metrics,
+                 "artifact_count": len(artifacts), "reported_status": reported})
+    # Only a FAILED/terminal parent orphans children (SEV-8). On a graceful success we
+    # leave any still-running children alone — they finalize independently via reconcile.
+    if failed:
+        await _cancel_orphans_if_terminal(job)
 
 
 async def _finalize_failed(job, reason: str = "sandbox died") -> None:
@@ -255,10 +267,19 @@ async def _session_fully_terminal(sid: str) -> bool:
 
 async def _cleanup_terminal_sessions() -> None:
     r = store.get_redis()
+    now = time.time()
     for sid in await _active_sessions():
         if not await _session_fully_terminal(sid):
             continue
-        # SET NX flag: do the (irreversible) volume delete + token revoke exactly once.
+        # Grace window: stamp the first-terminal time, and only do the irreversible
+        # cleanup once it's been terminal for CLEANUP_GRACE_SECONDS — so a late
+        # finalize-hook push isn't 401'd by a just-revoked token.
+        ts_key = f"session:{sid}:terminal_since"
+        await r.set(ts_key, now, nx=True, ex=7 * 24 * 3600)
+        first = await r.get(ts_key)
+        if first is not None and (now - float(first)) < CLEANUP_GRACE_SECONDS:
+            continue
+        # SET NX flag: do the volume delete + token revoke exactly once.
         if await r.set(f"session:{sid}:cleaned", "1", nx=True, ex=7 * 24 * 3600):
             await delete_session_volume(sid)
             await store.revoke_session_token(sid)

@@ -166,14 +166,38 @@ async def set_job_status(job_id: str, status: JobStatus | str) -> None:
     """
     new_v = status.value if isinstance(status, JobStatus) else str(status)
     r = get_redis()
+    # Guard existence: on real Redis a JSON.SET of a sub-path against a missing key
+    # errors at EXEC while the queued SADD/SREM still run, drifting the index. Skip
+    # cleanly if the job doc is gone (re-fetch in reconcile already handles this).
+    if not await r.exists(_job_key(job_id)):
+        return
     # Index membership is a PURE FUNCTION of the final committed status: inside one
     # MULTI/EXEC we SET $.status, SADD the new set, and SREM the job from every OTHER
-    # set. No out-of-transaction read of the old status (which could race and leak a
-    # duplicate index membership) — so the index can never drift, even under retries.
+    # set — so the index can never drift, even under retries.
     async with r.pipeline(transaction=True) as p:
         p.json().set(_job_key(job_id), "$.status", new_v)
         for st in JobStatus:
             if st.value == new_v:
+                p.sadd(_status_set_key(st), job_id)
+            else:
+                p.srem(_status_set_key(st), job_id)
+        await p.execute()
+
+
+async def mark_job_running(job_id: str, sandbox_id: str, backend: str) -> None:
+    """Atomically stamp sandbox_id + backend + status=running + status-index move in
+    ONE MULTI/EXEC (SEV: a crash between a separate update_job and set_job_status left
+    the job 'queued' with a live sandbox — a lost job). No-op if the doc is gone."""
+    r = get_redis()
+    if not await r.exists(_job_key(job_id)):
+        return
+    running = JobStatus.running.value
+    async with r.pipeline(transaction=True) as p:
+        p.json().set(_job_key(job_id), "$.sandbox_id", sandbox_id)
+        p.json().set(_job_key(job_id), "$.backend", backend)
+        p.json().set(_job_key(job_id), "$.status", running)
+        for st in JobStatus:
+            if st.value == running:
                 p.sadd(_status_set_key(st), job_id)
             else:
                 p.srem(_status_set_key(st), job_id)
@@ -328,30 +352,36 @@ def _upload_local(session_id: str, job_id: str, name: str, data: bytes) -> str:
     return f"/artifacts/{session_id}/{job_id}/{name}"
 
 
-def _upload_gcs(session_id: str, job_id: str, name: str, data: bytes, content_type: str) -> str:
+def _gcs_client():
+    """Single GCS credential-resolution path, shared by store.put_artifact and the
+    runner's gcs_uploader (SEV — gcs_uploader previously used bare ADC and ignored
+    the injected SA key, 403'ing on Cloud Run where the runtime SA lacks bucket IAM)."""
     import json
 
     from google.cloud import storage  # lazy: only needed when GCS configured
 
     if settings.storage_emulator_host:
         os.environ.setdefault("STORAGE_EMULATOR_HOST", settings.storage_emulator_host)
-        client = storage.Client()
-    elif settings.google_credentials_b64:
-        # Modal: SA key injected as single-line base64 (no file on disk).
+        return storage.Client()
+    if settings.google_credentials_b64:
+        # Modal / Cloud Run: SA key injected as single-line base64 (no file on disk).
         import base64
 
-        client = storage.Client.from_service_account_info(
+        return storage.Client.from_service_account_info(
             json.loads(base64.b64decode(settings.google_credentials_b64))
         )
-    elif settings.google_credentials_json:
-        client = storage.Client.from_service_account_info(
+    if settings.google_credentials_json:
+        return storage.Client.from_service_account_info(
             json.loads(settings.google_credentials_json)
         )
-    elif settings.google_credentials_file:
+    if settings.google_credentials_file:
         # Local: explicit SA key file (.env isn't exported to os.environ for ADC).
-        client = storage.Client.from_service_account_json(settings.google_credentials_file)
-    else:
-        client = storage.Client()  # ADC fallback
+        return storage.Client.from_service_account_json(settings.google_credentials_file)
+    return storage.Client()  # ADC fallback
+
+
+def _upload_gcs(session_id: str, job_id: str, name: str, data: bytes, content_type: str) -> str:
+    client = _gcs_client()
     path = f"{session_id}/{job_id}/{name}"
     bucket = client.bucket(settings.gcs_bucket)
     bucket.blob(path).upload_from_string(data, content_type=content_type)

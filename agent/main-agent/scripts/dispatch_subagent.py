@@ -65,8 +65,9 @@ def main(argv: list[str]) -> None:
     ap.add_argument(
         "--parent-job-id",
         type=str,
-        default="root",
-        help="job id of the main agent (default 'root' for local runs)",
+        default=os.environ.get("ALPHA_JOB_ID") or "root",
+        help="job id of the main agent; defaults to $ALPHA_JOB_ID (injected by the "
+             "runner), falling back to 'root' for standalone local runs",
     )
     args = ap.parse_args(argv)
 
