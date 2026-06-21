@@ -5,22 +5,26 @@ import { ArrowLeft, Menu, Network, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 import { stopSession } from "@/lib/api";
+import { AgentGraph } from "@/components/agent-graph";
 import { useAppAuth } from "@/components/auth/app-auth";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ChatComposer } from "@/components/chat-composer";
 import { ChatTranscript } from "@/components/chat-transcript";
 import { ContextBar } from "@/components/context-bar";
 import { Eyebrow } from "@/components/eyebrow";
+import { ResizeHandle } from "@/components/resize-handle";
 import { SessionHeader } from "@/components/session-header";
 import { TreePanel } from "@/components/tree-panel";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useChatSubmit } from "@/hooks/use-chat-submit";
+import { useResizablePane } from "@/hooks/use-resizable-pane";
 import { useSession } from "@/hooks/use-session";
 import { useSessions } from "@/hooks/use-sessions";
 import {
   artifactsOf,
+  graphOf,
   rootJob,
   subagentsOf,
   treeOf,
@@ -33,6 +37,13 @@ export default function Page() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [treeOpen, setTreeOpen] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [graphOpen, setGraphOpen] = useState(false);
+
+  const {
+    width: sidebarWidth,
+    nudge: nudgeSidebar,
+    reset: resetSidebar,
+  } = useResizablePane({ key: "ar.sidebarWidth", min: 200, max: 480, initial: 264 });
 
   const { sessions, loading, refresh } = useSessions(userId, getToken);
   const { state, phase, notFound, reconnect } = useSession(activeId, getToken);
@@ -41,6 +52,7 @@ export default function Page() {
     setActiveId(id);
     setSidebarOpen(false);
     setTreeOpen(false);
+    setGraphOpen(false);
     const url = new URL(window.location.href);
     if (id) url.searchParams.set("s", id);
     else url.searchParams.delete("s");
@@ -123,6 +135,7 @@ export default function Page() {
   };
 
   const tree = treeOf(state);
+  const graph = graphOf(state);
   const subagents = subagentsOf(state);
   const artifacts = artifactsOf(state);
 
@@ -137,14 +150,29 @@ export default function Page() {
   );
 
   const rightRail = (
-    <TreePanel tree={tree} subagents={subagents} artifacts={artifacts} />
+    <TreePanel
+      tree={tree}
+      subagents={subagents}
+      artifacts={artifacts}
+      onExpand={() => setGraphOpen(true)}
+    />
   );
 
   return (
     <TooltipProvider delayDuration={150}>
       <div className="flex h-screen w-full overflow-hidden bg-canvas text-ink">
         {/* Desktop sidebar (≥ md). Below md it becomes a slide-over drawer. */}
-        <div className="hidden w-[264px] shrink-0 md:flex">{sidebar}</div>
+        <div
+          className="hidden shrink-0 md:flex"
+          style={{ width: sidebarWidth }}
+        >
+          {sidebar}
+        </div>
+        <ResizeHandle
+          className="hidden md:block"
+          onResize={nudgeSidebar}
+          onReset={resetSidebar}
+        />
         <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
           <SheetContent side="left" className="w-[300px] p-0">
             {sidebar}
@@ -243,6 +271,9 @@ export default function Page() {
           </SheetContent>
         </Sheet>
       </div>
+      {graphOpen && (
+        <AgentGraph graph={graph} goal={state.goal} onClose={() => setGraphOpen(false)} />
+      )}
     </TooltipProvider>
   );
 }

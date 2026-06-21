@@ -1,6 +1,8 @@
 import type {
   AgentStatus,
   EventEnvelope,
+  GraphLink,
+  GraphNode,
   JobView,
   LoopStatus,
   LoopView,
@@ -55,6 +57,28 @@ function appendTranscript(
   return { ...prev, transcript, seq: seq + 1 };
 }
 
+/*
+  Stamp a job's live "current line" (for the graph node). Updates ONLY an
+  existing job — never creates one — so the invariant "token/log events never
+  create jobs" holds. Deterministic under replay (value = latest content). The
+  line is tail-trimmed so a long stream can't bloat state.
+*/
+function stampJobLine(
+  state: SessionState,
+  id: string,
+  line: string,
+  streaming: boolean
+): SessionState {
+  if (!id || !line.trim()) return state;
+  const job = state.jobs[id];
+  if (!job) return state;
+  const trimmed = line.length > 160 ? line.slice(line.length - 160) : line;
+  return {
+    ...state,
+    jobs: { ...state.jobs, [id]: { ...job, lastLine: trimmed, streaming } },
+  };
+}
+
 const STATUS_MAP: Record<string, AgentStatus> = {
   running: "running",
   done: "done",
@@ -85,11 +109,12 @@ export function applyEvent(prev: SessionState, env: EventEnvelope): SessionState
           : role === "tool_use" || role === "tool_result"
             ? "tool"
             : "assistant";
-    return appendTranscript(prev, {
+    const appended = appendTranscript(prev, {
       role: mapped,
       text: String(p.content ?? ""),
       toolName: (p.tool_name as string) ?? undefined,
     });
+    return stampJobLine(appended, env.job_id, String(p.content ?? ""), false);
   }
 
   // Streaming assistant text: coalesce token deltas into one growing item,
@@ -101,21 +126,23 @@ export function applyEvent(prev: SessionState, env: EventEnvelope): SessionState
     const delta = String(p.delta ?? "");
     const final = Boolean(p.final);
     const i = prev.transcript.findIndex((t) => t.msgId === msgId);
+    let next: SessionState;
+    let line: string;
     if (i >= 0) {
       const transcript = prev.transcript.slice();
-      transcript[i] = {
-        ...transcript[i],
-        text: transcript[i].text + delta,
+      line = transcript[i].text + delta;
+      transcript[i] = { ...transcript[i], text: line, streaming: !final };
+      next = { ...prev, transcript };
+    } else {
+      line = delta;
+      next = appendTranscript(prev, {
+        role: "assistant",
+        text: delta,
+        msgId,
         streaming: !final,
-      };
-      return { ...prev, transcript };
+      });
     }
-    return appendTranscript(prev, {
-      role: "assistant",
-      text: delta,
-      msgId,
-      streaming: !final,
-    });
+    return stampJobLine(next, env.job_id, line, !final);
   }
 
   // An `error` event surfaces as a system transcript line (#13).
@@ -219,6 +246,8 @@ export function applyEvent(prev: SessionState, env: EventEnvelope): SessionState
     }
     case "summary":
       if (p.summary != null) job.summary = String(p.summary);
+      if (p.summary != null) job.lastLine = String(p.summary);
+      job.streaming = false;
       if (p.metrics && typeof p.metrics.final_reward === "number") {
         job.lastReward = p.metrics.final_reward;
       } else if (
@@ -312,4 +341,41 @@ export function isRunning(state: SessionState): boolean {
     const s = state.jobs[id].status;
     return s === "running" || s === "queued" || s === "pending";
   });
+}
+
+export function graphOf(state: SessionState): {
+  nodes: GraphNode[];
+  links: GraphLink[];
+} {
+  if (!state.rootId) return { nodes: [], links: [] };
+  let childN = 0;
+  const nodes: GraphNode[] = state.order.map((id) => {
+    const j = state.jobs[id];
+    const isRoot = id === state.rootId;
+    let label: string;
+    if (isRoot) label = "Main agent";
+    else if (j.parentId === state.rootId) label = letter(childN++);
+    else label = (j.goal || j.kind).slice(0, 16);
+    return {
+      id,
+      label,
+      kind: j.goal || (j.kind === "experiment" ? "Experiment" : "Research"),
+      status: j.status,
+      depth: j.depth,
+      isRoot,
+      reward: j.lastReward,
+      rewards: j.rewards,
+      lastLine: j.lastLine,
+      streaming: j.streaming,
+    };
+  });
+  const links: GraphLink[] = state.order
+    .map((id) => state.jobs[id])
+    .filter((j) => j.parentId != null && state.jobs[j.parentId])
+    .map((j) => ({
+      source: j.parentId as string,
+      target: j.id,
+      active: j.status === "running",
+    }));
+  return { nodes, links };
 }
