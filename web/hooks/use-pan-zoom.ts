@@ -40,8 +40,8 @@ export function fitView(
     Math.max(
       bounds[0],
       Math.min(
-        (viewport.width - padding * 2) / cw,
-        (viewport.height - padding * 2) / ch
+        (Math.max(0, viewport.width - padding * 2)) / cw,
+        (Math.max(0, viewport.height - padding * 2)) / ch
       )
     )
   );
@@ -54,6 +54,10 @@ export function usePanZoom(initial: Transform = { x: 0, y: 0, k: 1 }) {
   const [transform, setTransform] = useState<Transform>(initial);
   const panning = useRef<{ x: number; y: number } | null>(null);
 
+  // NOTE for consumers: React attaches wheel listeners passively, so this
+  // handler cannot preventDefault the page scroll. The consuming element should
+  // sit in a full-screen overlay (no page scroll behind it) and/or set
+  // `overscroll-behavior: contain` to avoid the page scrolling under the zoom.
   const onWheel = useCallback((e: React.WheelEvent) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const cursor = { x: e.clientX - rect.left, y: e.clientY - rect.top };
@@ -77,11 +81,14 @@ export function usePanZoom(initial: Transform = { x: 0, y: 0, k: 1 }) {
     setTransform((t) => ({ ...t, x: t.x + dx, y: t.y + dy }));
   }, []);
 
-  const onPointerUp = useCallback(() => {
+  const onPointerUp = useCallback((e?: React.PointerEvent) => {
     panning.current = null;
+    if (e && e.currentTarget.hasPointerCapture?.(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
   }, []);
 
   const reset = useCallback(() => setTransform(initial), [initial]);
 
-  return { transform, setTransform, onWheel, onPointerDown, onPointerMove, onPointerUp, reset };
+  return { transform, setTransform, onWheel, onPointerDown, onPointerMove, onPointerUp, onPointerCancel: onPointerUp, reset };
 }
