@@ -153,6 +153,25 @@ sibling's graph. Two steps, both already wired:
    agent automatically. List the PNG in your `result.json` `artifacts`. Capture AFTER
    metrics exist (an empty run page has no charts).
 
+## If wandb or the Browserbase agent doesn't work — fall back to code + PNGs
+
+These are conveniences, not requirements. If wandb logging fails (missing
+`WANDB_API_KEY`, auth/network error) or the Browserbase screenshot agent fails
+(missing `BROWSERBASE_*`, Stagehand/agent error, login expired), **do NOT block,
+retry forever, or fail your run over it.** Fall back to the basics:
+
+- **Plot in code.** Generate your figures with matplotlib and save them straight to
+  `/workspace/.dispatched/artifacts/${ALPHA_JOB_ID}/*.png` — the Stop hook ships any
+  files there back exactly like a wandb screenshot would.
+- **Metrics to files.** Put the numbers in `result.json` (and optionally a
+  `metrics.json` / `*.csv` artifact). That is the source of truth, not the dashboard.
+- **Keep it simple.** Prefer basic, standard implementations over anything that
+  depends on a flaky external service. A working local plot beats a broken live view.
+
+Your finding — real numbers in `result.json` plus a plot PNG in the artifacts dir —
+is what matters. The live wandb dashboard and the smart screenshot are nice-to-haves
+layered on top; never let them be the reason a run produces nothing.
+
 ## Hard rules
 
 - Never modify `plan.base_hparams`, `plan.reward_fn_spec`, `plan.env_id`,
