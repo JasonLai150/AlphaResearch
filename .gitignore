@@ -17,6 +17,11 @@ __pycache__/
 node_modules/
 web/.next/
 web/out/
+web/*.tsbuildinfo
+web/package-lock.json
+
+# Editor / local tooling
+.claude/
 
 # Local data
 *.log

@@ -25,6 +25,9 @@ pure Redis Stream tailer.
 - **Not yet proven on real cloud:** the sub-agent result round-trip. Cloud Run can't mount a Modal
   Volume, so `reload_volume()` must hydrate via the Modal SDK (or sub-agents push results) before a
   live run completes — see `docs/backend-mvp-notes.md`. Real RL training + web demo still pending.
+- **Web Overview dashboard UI shell** (`web/`, branch `feat/dashboard-ui`): 3-pane console (sidebar +
+  chat transcript + agent-tree/subagents) on Tailwind v4 + shadcn/ui + Lucide, styled to `DESIGN.md`.
+  Renders from `lib/mock-data.ts` for now — still needs wiring to the live SSE `JobNode` stream (M6).
 
 ## Next (milestones — see tasks.md for granular checkboxes)
 - M0 ✅ tests · M1 ✅ runner · M2 ✅ containers · M7 ✅ deploy tooling — delivered in PR #8.
