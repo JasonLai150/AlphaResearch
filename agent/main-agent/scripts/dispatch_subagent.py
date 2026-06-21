@@ -23,13 +23,17 @@ Exit codes:
   0 = dispatched successfully (json on stdout)
   1 = invalid arguments or filesystem error
   2 = schema / consistency validation failed (reason on stderr)
+  3 = HTTP push to the runner failed (reason on stderr)
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import urllib.error
+import urllib.request
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -40,7 +44,6 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 from pydantic import ValidationError  # noqa: E402
-
 from schemas import ResearchPlan  # noqa: E402
 
 
@@ -91,6 +94,8 @@ def main(argv: list[str]) -> None:
     record = {
         "job_id": job_id,
         "parent_job_id": args.parent_job_id,
+        "session_id": os.environ.get("ALPHA_SESSION_ID", "local"),
+        "depth": int(os.environ.get("ALPHA_DEPTH", "0")) + 1,
         "kind": "agent",
         "created_at": datetime.now(UTC).isoformat(),
         "plan": plan.model_dump(mode="json"),
@@ -101,6 +106,25 @@ def main(argv: list[str]) -> None:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     out_path = args.out_dir / f"{job_id}.json"
     out_path.write_text(json.dumps(record, indent=2, sort_keys=True))
+
+    # Push the dispatch record to the runner over authenticated HTTP. The main
+    # agent has NO shared filesystem with the runner, so the local audit file
+    # above is for auditing only — the runner learns about the job via this POST.
+    # If ALPHA_INTERNAL_RUNNER_URL is unset we're in local-only mode: skip.
+    runner_url = os.environ.get("ALPHA_INTERNAL_RUNNER_URL", "").rstrip("/")
+    if runner_url:
+        token = os.environ.get("ALPHA_INTERNAL_TOKEN", "")
+        url = f"{runner_url}/internal/dispatch"
+        payload = json.dumps(record).encode("utf-8")
+        req = urllib.request.Request(url, data=payload, method="POST")
+        req.add_header("Authorization", f"Bearer {token}")
+        req.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(req, timeout=5):
+                pass
+        except (urllib.error.URLError, OSError) as e:
+            print(f"dispatch HTTP push failed: {e}", file=sys.stderr)
+            sys.exit(3)
 
     print(json.dumps({
         "job_id": job_id,

@@ -1,0 +1,143 @@
+"""Modal-side helpers for the sub-agent path: per-session volume naming, local
+mount paths, dispatch-record I/O, and the spawn/poll/cancel lifecycle.
+
+Volume layout per session. The same volume is mounted inside the sub-agent
+container at ``/workspace/.dispatched`` and visible to the runner host at
+``$ALPHA_VOLUME_ROOT/<sid>/.dispatched`` — i.e. ``dispatch_dir(sid)``:
+
+    .dispatched/
+        <jid>.json                — dispatch record (runner writes; sub-agent reads)
+        <jid>.result.json         — sub-agent's RunResult (atomic write, SEV-7)
+        <jid>.result.json.done    — sentinel: result fully written (SEV-7)
+        <jid>.failed.json         — runner writes on sandbox death / timeout
+        artifacts/<jid>/*         — sub-agent's binary outputs; runner ships to GCS
+
+The main-agent path uses Cloud Run Jobs (runner/cloud_run_client.py), NOT this
+module — main-agent has no shared filesystem with the runner.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Literal
+
+from infra.config import settings
+
+# ---- naming + paths ----------------------------------------------------
+
+def session_volume_name(sid: str) -> str:
+    return f"alpha-session-{sid}"
+
+
+def local_volume_path(sid: str) -> Path:
+    return Path(settings.volume_root) / sid
+
+
+def dispatch_dir(sid: str) -> Path:
+    return local_volume_path(sid) / ".dispatched"
+
+
+def results_for(sid: str, jid: str) -> tuple[Path, Path]:
+    d = dispatch_dir(sid)
+    return d / f"{jid}.result.json", d / f"{jid}.failed.json"
+
+
+def result_done_sentinel(sid: str, jid: str) -> Path:
+    """SEV-7: reconcile must see this before reading <jid>.result.json."""
+    return dispatch_dir(sid) / f"{jid}.result.json.done"
+
+
+def artifacts_dir(sid: str, jid: str) -> Path:
+    return dispatch_dir(sid) / "artifacts" / jid
+
+
+def write_dispatch_record(sid: str, jid: str, record: dict) -> Path:
+    """Place the dispatch record into the session volume so the sub-agent reads its
+    plan/idea on boot. Called by the dispatch loop before the Modal spawn."""
+    d = dispatch_dir(sid)
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / f"{jid}.json"
+    path.write_text(json.dumps(record, indent=2, sort_keys=True))
+    return path
+
+
+# ---- Modal lifecycle (sub-agent) ---------------------------------------
+#
+# Imports of the modal SDK are lazy so unit tests (which patch these functions)
+# never import or touch Modal. The runner mounts the per-session volume at
+# /workspace/.dispatched and commits the runner-side writes before spawning.
+
+def _modal():
+    import modal  # lazy
+    return modal
+
+
+async def _session_volume(sid: str):
+    modal = _modal()
+    return modal.Volume.from_name(session_volume_name(sid), create_if_missing=True)
+
+
+async def spawn_sub_agent(job_id: str, session_id: str) -> str:
+    """Spawn the sub_agent Modal Function for one dispatched idea. Returns the
+    FunctionCall object_id (stored as Job.sandbox_id)."""
+    modal = _modal()
+    vol = await _session_volume(session_id)
+    try:
+        await vol.commit.aio()  # flush runner-written dispatch record before spawn
+    except Exception:
+        pass
+    fn = modal.Function.from_name(settings.modal_app_name, "sub_agent")
+    call = await fn.with_options(volumes={"/workspace/.dispatched": vol}).spawn.aio(
+        job_id=job_id, session_id=session_id,
+    )
+    return call.object_id
+
+
+async def poll_modal_call(sandbox_id: str) -> Literal["running", "done", "failed"]:
+    """Map a Modal FunctionCall to our tri-state. 'running' is the safe default for
+    transient/unknown so reconcile keeps polling rather than wrongly finalizing."""
+    modal = _modal()
+    fc = modal.FunctionCall.from_id(sandbox_id)
+    try:
+        fc.get(timeout=0)
+        return "done"
+    except TimeoutError:
+        return "running"
+    except modal.exception.OutputExpiredError:
+        return "failed"
+    except modal.exception.FunctionTimeoutError:
+        return "failed"
+    except modal.exception.RemoteError:
+        return "failed"
+    except Exception:
+        return "running"
+
+
+async def cancel_modal_call(sandbox_id: str) -> None:
+    """Best-effort cancel (SEV-8: orphan children when a parent dies)."""
+    try:
+        modal = _modal()
+        modal.FunctionCall.from_id(sandbox_id).cancel()
+    except Exception:
+        pass
+
+
+async def reload_volume(sid: str) -> None:
+    """Force a Modal volume reload so the runner sees the sub-agent's writes.
+    No-op in tests/local mode (the volume is just a tmp dir)."""
+    try:
+        vol = await _session_volume(sid)
+        await vol.reload.aio()
+    except Exception:
+        pass
+
+
+async def delete_session_volume(sid: str) -> None:
+    """Reclaim a per-session volume once the whole session is terminal (SEV-6:
+    avoid the unbounded Modal Volume leak / quota cap). Also revokes the token."""
+    try:
+        modal = _modal()
+        modal.Volume.from_name(session_volume_name(sid)).delete()
+    except Exception:
+        pass
