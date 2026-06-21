@@ -67,6 +67,7 @@ export function SimCard({
     }
 
     function drawReward(p: number) {
+      if (w <= 0 || h <= 0) return; // pre-layout frame — retry next tick
       ctx.clearRect(0, 0, w, h);
       const padX = 4;
       const padY = 6;
@@ -111,13 +112,17 @@ export function SimCard({
     }
 
     function drawGrid(step: number) {
+      // Guard the pre-layout frame: a 0-size canvas makes `cell` negative, and a
+      // negative arc radius throws — which would kill this card's rAF loop before
+      // the ResizeObserver ever delivers the real size.
+      if (w <= 0 || h <= 0) return;
       ctx.clearRect(0, 0, w, h);
       const cell = Math.min((h - 4) / G, (w - 4) / G);
       const ox = (w - cell * G) / 2;
       const oy = (h - cell * G) / 2;
 
       // Grid lines.
-      ctx.strokeStyle = "rgba(255,255,255,0.07)";
+      ctx.strokeStyle = "rgba(255,255,255,0.1)";
       ctx.lineWidth = 1;
       for (let i = 0; i <= G; i++) {
         ctx.beginPath();
