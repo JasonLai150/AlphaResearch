@@ -6,7 +6,8 @@ export type EventType =
   | "spawn"
   | "artifact"
   | "summary"
-  | "error";
+  | "error"
+  | "token";
 
 export interface EventEnvelope {
   session_id: string;
@@ -192,6 +193,10 @@ export interface TranscriptItem {
   role: "user" | "assistant" | "tool" | "system";
   text: string;
   toolName?: string;
+  /** Stable id shared by all token deltas of one streamed message block. */
+  msgId?: string;
+  /** True while deltas are still arriving (drives the typewriter caret). */
+  streaming?: boolean;
 }
 
 export interface SessionState {
