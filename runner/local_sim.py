@@ -14,6 +14,7 @@ imported when it is true, so it never affects the real runner or the test suite.
 from __future__ import annotations
 
 import asyncio
+import re
 
 from infra import store
 from infra.schemas import (
@@ -28,6 +29,10 @@ from infra.schemas import (
 
 # Base pacing (seconds). Kept short so a run streams visibly but finishes in ~10s.
 _TICK = 0.7
+
+# Typewriter pacing for assistant narration. Short so a message types out in
+# ~0.5-1s without dragging the ~10s scripted run.
+_TOKEN_TICK = 0.04
 
 
 async def _emit(sid, jid, depth, type_, payload, parent=None) -> None:
@@ -44,11 +49,42 @@ async def _emit(sid, jid, depth, type_, payload, parent=None) -> None:
 
 
 async def _msg(sid, jid, role, content) -> None:
+    # Assistant narration types out as `token` deltas (typewriter). User/tool/
+    # system lines stay atomic `log` events.
+    if role == "assistant":
+        await _stream_assistant(sid, jid, content)
+        return
     await store.append_message(
         Message(session_id=sid, job_id=jid, role=role, content=content)
     )
-    # Mirror onto the event bus so the chat transcript streams live over SSE.
     await _emit(sid, jid, 0, EventType.log, {"role": role, "content": content})
+
+
+def _chunk_text(content: str, group: int = 3) -> list[str]:
+    """Split `content` into ~`group`-word chunks, preserving trailing whitespace
+    so that ``"".join(chunks) == content`` (deltas concatenate back exactly)."""
+    words = re.findall(r"\S+\s*", content)
+    if not words:
+        return []
+    return ["".join(words[i : i + group]) for i in range(0, len(words), group)]
+
+
+async def _stream_assistant(sid, jid, content) -> None:
+    """Emit `content` as a sequence of token deltas (last one final), then persist
+    the whole message for the /full snapshot. Mirrors what stream_relay does for
+    the real agent."""
+    msg_id = store.new_id("m")
+    chunks = _chunk_text(content)
+    last = len(chunks) - 1
+    for i, chunk in enumerate(chunks):
+        await _emit(
+            sid, jid, 0, EventType.token,
+            {"msg_id": msg_id, "role": "assistant", "delta": chunk, "final": i == last},
+        )
+        await asyncio.sleep(_TOKEN_TICK)
+    await store.append_message(
+        Message(session_id=sid, job_id=jid, role="assistant", content=content)
+    )
 
 
 def _reward_svg(points: list[tuple[int, float]], color: str = "#ff7a17") -> bytes:
