@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Stop hook (sub agent): atomically write RunResult to the shared volume,
+"""Stop hook (sub agent): publish the agent's RunResult into the shared volume,
 then push a summary event. SEV-7 atomic write. Never fails the agent.
 
-The sub-agent's volume is mounted at ``$ALPHA_DISPATCH_DIR`` (default
-``/workspace/.dispatched``). We write ``<jid>.result.json`` via a tmp file +
-atomic ``os.replace``, then touch ``<jid>.result.json.done`` as a sentinel so
-the runner only ever reads a fully-written result (no torn JSON on crash).
+The agent is instructed (CLAUDE.md) to write its full RunResult to
+``$ALPHA_WORKSPACE/result.json``. This hook copies that into the per-session
+volume at ``$ALPHA_DISPATCH_DIR/<jid>.result.json`` via a tmp file + atomic
+``os.replace``, then touches ``<jid>.result.json.done`` as a sentinel so the
+runner only ever reads a fully-written result (no torn JSON on crash). If the
+agent produced no/invalid result.json, we publish a ``failed`` result so the
+runner finalizes the job instead of polling it forever.
 """
 
 from __future__ import annotations
@@ -20,30 +23,33 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _push import push  # noqa: E402
 
 
+def _load_result(ws: Path, jid: str) -> dict:
+    rp = ws / "result.json"
+    if not rp.exists():
+        return {"job_id": jid, "status": "failed", "summary": "sub-agent produced no result.json",
+                "metrics": {}}
+    try:
+        data = json.loads(rp.read_text())
+    except (json.JSONDecodeError, ValueError, OSError):
+        return {"job_id": jid, "status": "failed",
+                "summary": "result.json present but invalid JSON", "metrics": {}}
+    if not isinstance(data, dict):
+        return {"job_id": jid, "status": "failed", "summary": "result.json not an object",
+                "metrics": {}}
+    data.setdefault("job_id", jid)
+    data.setdefault("status", "done")
+    data.setdefault("metrics", {})
+    return data
+
+
 def main() -> None:
-    summary = ""
     jid = os.environ.get("ALPHA_JOB_ID", "")
+    result: dict = {"job_id": jid, "status": "failed", "summary": "finalize error", "metrics": {}}
     try:
         ws = Path(os.environ.get("ALPHA_WORKSPACE", "/workspace"))
         dispatch = Path(os.environ.get("ALPHA_DISPATCH_DIR", "/workspace/.dispatched"))
-
-        summary_path = ws / "result_summary.txt"
-        summary = summary_path.read_text() if summary_path.exists() else ""
-
-        metrics: dict = {}
-        metrics_path = ws / "result_metrics.json"
-        if metrics_path.exists():
-            try:
-                metrics = json.loads(metrics_path.read_text())
-            except (json.JSONDecodeError, ValueError):
-                metrics = {"_parse_error": True}
-
-        result = {
-            "job_id": jid,
-            "status": "done",
-            "summary": summary.strip()[:4000],
-            "metrics": metrics,
-        }
+        result = _load_result(ws, jid)
+        result["job_id"] = jid  # the runner addresses results by ALPHA_JOB_ID
 
         dispatch.mkdir(parents=True, exist_ok=True)
         tmp = dispatch / (jid + ".result.json.tmp")
@@ -66,7 +72,7 @@ def main() -> None:
             "job_id": jid,
             "depth": depth,
             "type": "summary",
-            "payload": {"finished": True, "summary": summary[:240]},
+            "payload": {"finished": True, "summary": str(result.get("summary", ""))[:240]},
         },
     )
     sys.exit(0)

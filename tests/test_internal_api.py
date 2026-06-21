@@ -189,10 +189,27 @@ async def test_children_artifacts(client, fake_redis):
 
 
 async def test_children_rejects_cross_session(client, fake_redis):
+    """A foreign token must not be able to distinguish 'exists elsewhere' from
+    'not found' — both collapse to 404 (no cross-session existence oracle)."""
     await _seed_parent(sid="s_a", jid="j_root")
     tok_b = await store.mint_agent_token("s_b")
     r = await client.get("/internal/children/j_root", headers=_bearer(tok_b))
-    assert r.status_code == 403
+    assert r.status_code == 404
+    # and a genuinely missing parent for the owning token is also 404
+    tok_a = await store.mint_agent_token("s_a")
+    r2 = await client.get("/internal/children/j_missing", headers=_bearer(tok_a))
+    assert r2.status_code == 404
+
+
+async def test_dispatch_rejects_invalid_kind(client, fake_redis):
+    """Garbage 'kind' is rejected at validation (422) — never reaches claim_fanout."""
+    await _seed_parent()
+    tok = await store.mint_agent_token("s_a")
+    r = await client.post("/internal/dispatch",
+                          json={"job_id": "j_c", "parent_job_id": "j_root", "session_id": "s_a",
+                                "depth": 1, "kind": "totally-bogus"},
+                          headers=_bearer(tok))
+    assert r.status_code == 422
 
 
 # ---- shared-token fallback (dev only) ----------------------------------

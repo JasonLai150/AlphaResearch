@@ -8,7 +8,9 @@ and exit.
 
 ## What you get on startup
 
-The runner mounts the dispatch record at `/workspace/job.json`. Read it first.
+The runner mounts a per-session volume at `/workspace/.dispatched` and writes your
+dispatch record to `/workspace/.dispatched/${ALPHA_JOB_ID}.json`. Read it first
+(your job id is in the `ALPHA_JOB_ID` env var).
 Shape (validated by the main agent's dispatch script):
 
 ```json
@@ -80,8 +82,11 @@ none moved the metric — that's a valid negative finding.
 
 ## Output: write the RunResult
 
-When you stop, write `/workspace/result.json` (the runner copies this back to
-the main agent as `<job_id>.result.json`):
+When you stop, write `/workspace/result.json`. On exit, the Stop hook copies it
+atomically into the volume and the runner picks it up (writing a `.done` sentinel
+so a half-written file is never read). Put any binary artifacts (plots, logs,
+checkpoints) under `/workspace/.dispatched/artifacts/${ALPHA_JOB_ID}/` — the runner
+ships those to GCS and attaches the `gs://` URLs to your result.
 
 ```json
 {
@@ -98,7 +103,7 @@ the main agent as `<job_id>.result.json`):
   },
   "validated": true | false,
   "validation_reasoning": "<one paragraph: why this counts (or doesn't) as a validated finding>",
-  "artifacts": ["<paths to plots / logs / checkpoints under /workspace/artifacts/, optional>"]
+  "artifacts": ["<filenames you wrote under /workspace/.dispatched/artifacts/${ALPHA_JOB_ID}/, optional>"]
 }
 ```
 
@@ -114,6 +119,6 @@ the whole session.
   AND your intervention number, both real runs).
 - Never spawn additional containers. You have only `Bash`/`Read`/`Write`/`Edit`
   /`Glob`/`Grep` — there is no dispatch tool here.
-- If `/workspace/job.json` is missing or fails the shape above, write a
+- If `/workspace/.dispatched/${ALPHA_JOB_ID}.json` is missing or fails the shape above, write a
   `result.json` with `status: "failed"` and a clear summary explaining what
   was missing, then exit. Don't try to invent inputs.

@@ -22,6 +22,7 @@ import json
 from pathlib import Path
 from typing import Literal
 
+from infra import store
 from infra.config import settings
 
 # ---- naming + paths ----------------------------------------------------
@@ -80,8 +81,11 @@ async def _session_volume(sid: str):
 
 async def spawn_sub_agent(job_id: str, session_id: str) -> str:
     """Spawn the sub_agent Modal Function for one dispatched idea. Returns the
-    FunctionCall object_id (stored as Job.sandbox_id)."""
+    FunctionCall object_id (stored as Job.sandbox_id). Injects the per-session
+    token + runner URL (SEV-4) so the sub-agent's hooks authenticate as this
+    session only."""
     modal = _modal()
+    token = await store.get_session_token(session_id)
     vol = await _session_volume(session_id)
     try:
         await vol.commit.aio()  # flush runner-written dispatch record before spawn
@@ -90,35 +94,40 @@ async def spawn_sub_agent(job_id: str, session_id: str) -> str:
     fn = modal.Function.from_name(settings.modal_app_name, "sub_agent")
     call = await fn.with_options(volumes={"/workspace/.dispatched": vol}).spawn.aio(
         job_id=job_id, session_id=session_id,
+        internal_token=token, internal_runner_url=settings.internal_runner_url,
     )
     return call.object_id
 
 
 async def poll_modal_call(sandbox_id: str) -> Literal["running", "done", "failed"]:
-    """Map a Modal FunctionCall to our tri-state. 'running' is the safe default for
-    transient/unknown so reconcile keeps polling rather than wrongly finalizing."""
+    """Map a Modal FunctionCall to our tri-state. Uses the async ``.aio`` variant so
+    it never blocks the runner's event loop.
+
+    Semantics of ``fc.get(timeout=0)``: returns => the function finished OK; raises
+    TimeoutError => still executing; raises the function's exception => it terminated
+    with a failure. We therefore treat ANY non-timeout, non-transient exception as
+    ``failed`` (so a crashed sub-agent is finalized, not polled forever) and keep
+    ``running`` only for clearly-transient connectivity errors.
+    """
     modal = _modal()
     fc = modal.FunctionCall.from_id(sandbox_id)
     try:
-        fc.get(timeout=0)
+        await fc.get.aio(timeout=0)
         return "done"
     except TimeoutError:
         return "running"
-    except modal.exception.OutputExpiredError:
-        return "failed"
-    except modal.exception.FunctionTimeoutError:
-        return "failed"
-    except modal.exception.RemoteError:
-        return "failed"
-    except Exception:
-        return "running"
+    except Exception as e:  # noqa: BLE001
+        name = type(e).__name__.lower()
+        if any(t in name for t in ("connection", "timeout", "unavailable", "deadline")):
+            return "running"  # transient — keep polling
+        return "failed"      # the call terminated with an error
 
 
 async def cancel_modal_call(sandbox_id: str) -> None:
     """Best-effort cancel (SEV-8: orphan children when a parent dies)."""
     try:
         modal = _modal()
-        modal.FunctionCall.from_id(sandbox_id).cancel()
+        await modal.FunctionCall.from_id(sandbox_id).cancel.aio()
     except Exception:
         pass
 

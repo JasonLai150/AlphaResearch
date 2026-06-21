@@ -166,16 +166,17 @@ async def set_job_status(job_id: str, status: JobStatus | str) -> None:
     """
     new_v = status.value if isinstance(status, JobStatus) else str(status)
     r = get_redis()
-    res = await r.json().get(_job_key(job_id), "$.status")
-    if isinstance(res, list):
-        old_v = res[0] if res else None
-    else:
-        old_v = res  # fakeredis/real-redis scalar form
+    # Index membership is a PURE FUNCTION of the final committed status: inside one
+    # MULTI/EXEC we SET $.status, SADD the new set, and SREM the job from every OTHER
+    # set. No out-of-transaction read of the old status (which could race and leak a
+    # duplicate index membership) — so the index can never drift, even under retries.
     async with r.pipeline(transaction=True) as p:
         p.json().set(_job_key(job_id), "$.status", new_v)
-        if old_v and old_v != new_v:
-            p.srem(_status_set_key(old_v), job_id)
-        p.sadd(_status_set_key(new_v), job_id)
+        for st in JobStatus:
+            if st.value == new_v:
+                p.sadd(_status_set_key(st), job_id)
+            else:
+                p.srem(_status_set_key(st), job_id)
         await p.execute()
 
 
@@ -298,7 +299,7 @@ async def put_artifact(
     caption: str | None = None,
     content_type: str = "application/octet-stream",
 ) -> ArtifactRef:
-    aid = new_id("a")
+    aid = deterministic_artifact_id(session_id, job_id, name)  # SEV-10: idempotent re-puts
     if settings.gcs_bucket:
         url = await asyncio.to_thread(
             _upload_gcs, session_id, job_id, name, data, content_type
@@ -579,13 +580,21 @@ async def revoke_session_token(session_id: str) -> None:
 LEADER_KEY = "runner:leader"
 LEADER_TTL = 15
 
-# CAS refresh: only the current owner may extend the lease (avoids a laggy old
-# instance stealing it back after a new leader took over).
+# CAS scripts: only the current owner may extend or release the lease. Both the
+# re-acquire and release paths MUST be atomic — a GET-then-SET/DEL would let a laggy
+# instance stamp/delete a lease a newer leader just took (electing two leaders).
 _LEASE_REFRESH_LUA = """
 if redis.call('get', KEYS[1]) == ARGV[1] then
   return redis.call('set', KEYS[1], ARGV[1], 'EX', ARGV[2])
 else
   return false
+end
+"""
+_LEASE_RELEASE_LUA = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+  return redis.call('del', KEYS[1])
+else
+  return 0
 end
 """
 
@@ -594,10 +603,9 @@ async def acquire_leader_lease(runner_id: str, ttl: int = LEADER_TTL) -> bool:
     r = get_redis()
     if await r.set(LEADER_KEY, runner_id, nx=True, ex=ttl):
         return True
-    if await r.get(LEADER_KEY) == runner_id:  # we already own it — extend
-        await r.expire(LEADER_KEY, ttl)
-        return True
-    return False
+    # Already held — extend ONLY if still ours, atomically (SEV-2: no TOCTOU that
+    # could return True for us while the key already names a newer leader).
+    return await refresh_leader_lease(runner_id, ttl)
 
 
 async def refresh_leader_lease(runner_id: str, ttl: int = LEADER_TTL) -> bool:
@@ -606,9 +614,7 @@ async def refresh_leader_lease(runner_id: str, ttl: int = LEADER_TTL) -> bool:
 
 
 async def release_leader_lease(runner_id: str) -> None:
-    r = get_redis()
-    if await r.get(LEADER_KEY) == runner_id:
-        await r.delete(LEADER_KEY)
+    await get_redis().eval(_LEASE_RELEASE_LUA, 1, LEADER_KEY, runner_id)
 
 
 __all__ = [

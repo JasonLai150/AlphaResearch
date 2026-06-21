@@ -14,6 +14,7 @@ Security (SEV-4 + SEV-5):
 
 from __future__ import annotations
 
+import secrets
 from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
@@ -41,7 +42,10 @@ async def require_caller(authorization: str | None = Header(default=None)) -> Ca
     sid = await store.resolve_agent_token(token)
     if sid:
         return Caller(session_id=sid)
-    if settings.internal_token_fallback and token == settings.internal_token:
+    # Dev fallback only. Constant-time compare so the shared token can't be timing-probed.
+    if settings.internal_token_fallback and secrets.compare_digest(
+        token, settings.internal_token
+    ):
         return Caller(session_id=None)
     raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad token")
 
@@ -76,7 +80,7 @@ class DispatchIn(BaseModel):
     parent_job_id: str
     session_id: str
     depth: int
-    kind: str = "agent"
+    kind: JobKind = JobKind.agent  # enum-typed: garbage -> 422 at parse, before any side effect
     plan: dict | None = None
     idea_id: str | None = None
     strategy: str | None = None
@@ -126,30 +130,37 @@ async def post_dispatch(d: DispatchIn, caller: Caller = Depends(require_caller))
     if not await store.claim_fanout(d.parent_job_id, settings.max_fanout):
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS,
                             f"max_fanout={settings.max_fanout} reached")
-
-    child = Job(
-        id=d.job_id, session_id=d.session_id, parent_job_id=d.parent_job_id,
-        depth=d.depth, kind=JobKind(d.kind), status=JobStatus.queued, backend="modal",
-        params={"plan": d.plan, "idea_id": d.idea_id, "strategy": d.strategy},
-    )
-    await store.create_job(child)  # also links parent + session-jobs index
-    await store.enqueue_dispatch(d.job_id)
-    await store.emit_event(EventEnvelope(
-        session_id=d.session_id, job_id=d.job_id, parent_job_id=d.parent_job_id,
-        depth=d.depth, type=EventType.spawn,
-        payload={"strategy": d.strategy, "idea_id": d.idea_id},
-    ))
+    try:
+        child = Job(
+            id=d.job_id, session_id=d.session_id, parent_job_id=d.parent_job_id,
+            depth=d.depth, kind=d.kind, status=JobStatus.queued, backend="modal",
+            params={"plan": d.plan, "idea_id": d.idea_id, "strategy": d.strategy},
+        )
+        await store.create_job(child)  # also links parent + session-jobs index
+        await store.enqueue_dispatch(d.job_id)
+        await store.emit_event(EventEnvelope(
+            session_id=d.session_id, job_id=d.job_id, parent_job_id=d.parent_job_id,
+            depth=d.depth, type=EventType.spawn,
+            payload={"strategy": d.strategy, "idea_id": d.idea_id},
+        ))
+    except Exception:
+        await store.release_fanout(d.parent_job_id)  # don't permanently burn the slot
+        raise
     return {"queued": True}
 
 
 # ---- child status / artifacts (main-agent polls these) -----------------
 
+def _owned_or_404(caller: Caller, parent) -> None:
+    """Collapse 'not found' and 'foreign session' into one 404 so a token can't be
+    used as a cross-session existence oracle (enumerate job ids by 404-vs-403)."""
+    if parent is None or (caller.session_id is not None and parent.session_id != caller.session_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown parent job")
+
+
 @router.get("/children/{parent_job_id}", include_in_schema=False)
 async def get_children(parent_job_id: str, caller: Caller = Depends(require_caller)) -> list[dict]:
-    parent = await store.get_job(parent_job_id)
-    if parent is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown parent job")
-    _enforce_session(caller, parent.session_id)
+    _owned_or_404(caller, await store.get_job(parent_job_id))
     return await store.child_statuses(parent_job_id)
 
 
@@ -157,10 +168,7 @@ async def get_children(parent_job_id: str, caller: Caller = Depends(require_call
 async def get_children_artifacts(
     parent_job_id: str, caller: Caller = Depends(require_caller)
 ) -> dict:
-    parent = await store.get_job(parent_job_id)
-    if parent is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown parent job")
-    _enforce_session(caller, parent.session_id)
+    _owned_or_404(caller, await store.get_job(parent_job_id))
     out: dict[str, list[dict]] = {}
     for cjid in await store.get_children(parent_job_id):
         out[cjid] = [a.model_dump(mode="json") for a in await store.list_artifacts_for(cjid)]

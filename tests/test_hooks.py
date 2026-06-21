@@ -161,11 +161,15 @@ def test_log_transcript_posts(recorder):
 
 
 def test_sub_finalize_writes_atomic_result(recorder, tmp_path):
+    """SEV-7: finalize copies the agent's own result.json (per sub-agent CLAUDE.md)
+    into the volume atomically + a .done sentinel."""
     ws = tmp_path / "workspace"
     dispatch = tmp_path / "dispatched"
     ws.mkdir()
-    (ws / "result_summary.txt").write_text("ppo+icm hit 0.82\n")
-    (ws / "result_metrics.json").write_text(json.dumps({"score": 0.82}))
+    (ws / "result.json").write_text(json.dumps({
+        "job_id": "j_c", "idea_id": "idea_1", "status": "done",
+        "summary": "ppo+icm hit 0.82", "metrics": {"score": 0.82}, "validated": True,
+    }))
 
     env = _base_env(
         recorder.base_url,
@@ -186,18 +190,32 @@ def test_sub_finalize_writes_atomic_result(recorder, tmp_path):
     assert not tmp_leftover.exists(), "leftover .tmp not cleaned up"
 
     result = json.loads(result_path.read_text())
-    assert result == {
-        "job_id": "j_c",
-        "status": "done",
-        "summary": "ppo+icm hit 0.82",
-        "metrics": {"score": 0.82},
-    }
+    assert result["job_id"] == "j_c"
+    assert result["status"] == "done"
+    assert result["summary"] == "ppo+icm hit 0.82"
+    assert result["metrics"] == {"score": 0.82}
 
     # The summary event must have been pushed to the runner.
     events = [r for r in recorder.records if r["path"] == "/internal/events"]
     assert len(events) == 1, recorder.records
     assert events[0]["body"]["type"] == "summary"
     assert events[0]["body"]["payload"]["finished"] is True
+
+
+def test_sub_finalize_missing_result_marks_failed(recorder, tmp_path):
+    """SEV-7: no result.json -> a 'failed' result is still published (+ sentinel)."""
+    ws = tmp_path / "workspace"
+    dispatch = tmp_path / "dispatched"
+    ws.mkdir()
+    env = _base_env(
+        recorder.base_url, ALPHA_DEPTH="1", ALPHA_JOB_ID="j_c",
+        ALPHA_WORKSPACE=str(ws), ALPHA_DISPATCH_DIR=str(dispatch),
+    )
+    proc = _run_hook(SUB_HOOKS / "finalize.py", "", env)
+    assert proc.returncode == 0, proc.stderr
+    result = json.loads((dispatch / "j_c.result.json").read_text())
+    assert result["status"] == "failed"
+    assert (dispatch / "j_c.result.json.done").exists()
 
 
 def test_hook_swallows_unreachable_runner():
