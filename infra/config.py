@@ -121,5 +121,20 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("ALPHA_RUNNER_ENABLED"),
     )
 
+    # ---- Agent OTEL telemetry (Layer A: inject into agent subprocess env) ------
+    # Opt-in: set agent_otel_enabled=true AND otel_otlp_endpoint to activate.
+    agent_otel_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("ALPHA_AGENT_OTEL_ENABLED"),
+    )
+    otel_otlp_endpoint: str = Field(
+        default="",
+        validation_alias=AliasChoices("OTEL_EXPORTER_OTLP_ENDPOINT"),
+    )
+    otel_otlp_headers: str = Field(
+        default="",
+        validation_alias=AliasChoices("OTEL_EXPORTER_OTLP_HEADERS"),
+    )
+
 
 settings = Settings()

@@ -117,8 +117,11 @@ async def _consume_sessions_once() -> None:
             op="alpha.runner.spawn_main_agent", name="spawn_main_agent"
         ) as txn:
             tag_alpha(txn, session_id=sid, job_id=root_id, depth=0, backend="cloud_run_job")
+            traceparent = sentry_sdk.get_traceparent() or ""
+            baggage = sentry_sdk.get_baggage() or ""
             try:
-                sandbox_id = await spawn_main_agent_job(sid, root_id)  # may raise (SEV-9) -> no xdel
+                sandbox_id = await spawn_main_agent_job(  # may raise (SEV-9) -> no xdel
+                    sid, root_id, traceparent=traceparent, baggage=baggage)
             except Exception as e:  # noqa: BLE001
                 txn.set_status("internal_error")
                 sentry_sdk.capture_exception(e)
@@ -147,10 +150,14 @@ async def _consume_dispatches_once() -> None:
         ) as txn:
             tag_alpha(txn, session_id=job.session_id, job_id=jid, depth=job.depth,
                       job_kind=job.kind.value, backend="modal")
+            traceparent = sentry_sdk.get_traceparent() or ""
+            baggage = sentry_sdk.get_baggage() or ""
             try:
                 # PR2: the dispatch record rides as a Modal call arg (no shared volume) —
                 # the sub_agent function writes it into its own /workspace/.dispatched on boot.
-                sandbox_id = await spawn_sub_agent(jid, job.session_id, _record_from_job(job))
+                sandbox_id = await spawn_sub_agent(
+                    jid, job.session_id, _record_from_job(job),
+                    traceparent=traceparent, baggage=baggage)
             except Exception as e:  # noqa: BLE001
                 txn.set_status("internal_error")
                 sentry_sdk.capture_exception(e)

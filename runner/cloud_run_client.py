@@ -34,10 +34,16 @@ def _execs():
     return _execs_client
 
 
-async def spawn_main_agent_job(session_id: str, job_id: str) -> str:
+async def spawn_main_agent_job(
+    session_id: str, job_id: str, *, traceparent: str = "", baggage: str = ""
+) -> str:
     """Trigger a main-agent Cloud Run Job execution. Returns the execution name
     (used as Job.sandbox_id). Raises if the LRO yields no execution name so the
-    caller never records sandbox_id=None and then xdels the queue entry (SEV-9)."""
+    caller never records sandbox_id=None and then xdels the queue entry (SEV-9).
+
+    When agent OTEL is enabled (settings.agent_otel_enabled + an OTLP endpoint),
+    injects Claude Code's native-telemetry env vars + W3C trace context so the agent's
+    OTEL traces export to Sentry, correlated by alpha.session_id/alpha.job_id."""
     from google.cloud import run_v2
 
     token = await store.get_session_token(session_id)  # SEV-4: per-session, per-exec
@@ -45,24 +51,42 @@ async def spawn_main_agent_job(session_id: str, job_id: str) -> str:
         f"projects/{settings.gcp_project}/locations/{settings.gcp_region}"
         f"/jobs/{settings.main_agent_job_name}"
     )
+    env = [
+        run_v2.EnvVar(name="ALPHA_SESSION_ID", value=session_id),
+        run_v2.EnvVar(name="ALPHA_JOB_ID", value=job_id),
+        run_v2.EnvVar(name="ALPHA_DEPTH", value="0"),
+        run_v2.EnvVar(name="ALPHA_MODEL", value=settings.model),
+        run_v2.EnvVar(name="ALPHA_INTERNAL_TOKEN", value=token),
+        run_v2.EnvVar(name="ALPHA_INTERNAL_RUNNER_URL", value=settings.internal_runner_url),
+        # The goal is NOT injected here — the agent fetches it from
+        # GET /internal/bootstrap (token->session), so the conversational
+        # future can return a refined goal/transcript via the same seam.
+    ]
+    if settings.agent_otel_enabled and settings.otel_otlp_endpoint:
+        env += [
+            run_v2.EnvVar(name="CLAUDE_CODE_ENABLE_TELEMETRY", value="1"),
+            run_v2.EnvVar(name="CLAUDE_CODE_ENHANCED_TELEMETRY_BETA", value="1"),
+            run_v2.EnvVar(name="OTEL_TRACES_EXPORTER", value="otlp"),
+            run_v2.EnvVar(name="OTEL_LOGS_EXPORTER", value="otlp"),
+            run_v2.EnvVar(name="OTEL_EXPORTER_OTLP_PROTOCOL", value="http/protobuf"),
+            run_v2.EnvVar(name="OTEL_EXPORTER_OTLP_ENDPOINT", value=settings.otel_otlp_endpoint),
+            run_v2.EnvVar(name="OTEL_LOG_USER_PROMPTS", value="true"),
+            run_v2.EnvVar(name="OTEL_LOG_TOOL_DETAILS", value="true"),
+            run_v2.EnvVar(name="OTEL_LOG_TOOL_CONTENT", value="true"),
+            run_v2.EnvVar(
+                name="OTEL_RESOURCE_ATTRIBUTES",
+                value=f"alpha.session_id={session_id},alpha.job_id={job_id},alpha.depth=0",
+            ),
+        ]
+        if settings.otel_otlp_headers:
+            env.append(run_v2.EnvVar(name="OTEL_EXPORTER_OTLP_HEADERS",
+                                     value=settings.otel_otlp_headers))
+        if traceparent:
+            env.append(run_v2.EnvVar(name="TRACEPARENT", value=traceparent))
+        if baggage:
+            env.append(run_v2.EnvVar(name="TRACESTATE", value=baggage))
     overrides = run_v2.RunJobRequest.Overrides(
-        container_overrides=[
-            run_v2.RunJobRequest.Overrides.ContainerOverride(
-                env=[
-                    run_v2.EnvVar(name="ALPHA_SESSION_ID", value=session_id),
-                    run_v2.EnvVar(name="ALPHA_JOB_ID", value=job_id),
-                    run_v2.EnvVar(name="ALPHA_DEPTH", value="0"),
-                    run_v2.EnvVar(name="ALPHA_MODEL", value=settings.model),
-                    run_v2.EnvVar(name="ALPHA_INTERNAL_TOKEN", value=token),
-                    run_v2.EnvVar(
-                        name="ALPHA_INTERNAL_RUNNER_URL", value=settings.internal_runner_url
-                    ),
-                    # The goal is NOT injected here — the agent fetches it from
-                    # GET /internal/bootstrap (token->session), so the conversational
-                    # future can return a refined goal/transcript via the same seam.
-                ],
-            )
-        ],
+        container_overrides=[run_v2.RunJobRequest.Overrides.ContainerOverride(env=env)],
     )
     op = await _jobs().run_job(run_v2.RunJobRequest(name=name, overrides=overrides))
     metadata = getattr(op, "metadata", None)

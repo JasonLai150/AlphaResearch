@@ -96,6 +96,8 @@ def sub_agent(
     internal_token: str = "",
     internal_runner_url: str = "",
     dispatch_record: str = "",
+    traceparent: str = "",
+    baggage: str = "",
 ) -> None:
     """Boot the Claude Code sub-agent.
 
@@ -133,6 +135,13 @@ def sub_agent(
         env["ALPHA_INTERNAL_TOKEN"] = internal_token
     if internal_runner_url:
         env["ALPHA_INTERNAL_RUNNER_URL"] = internal_runner_url
+    if traceparent:
+        env["TRACEPARENT"] = traceparent
+    if baggage:
+        env["TRACESTATE"] = baggage
+    # Static OTEL config (CLAUDE_CODE_ENABLE_TELEMETRY, OTEL_EXPORTER_OTLP_*, content
+    # flags) arrives via the alpha-secrets Modal secret (see scripts/deploy_modal.sh),
+    # not here. traceparent/baggage above are the per-exec W3C trace context (Layer A).
 
     # Intentionally NOT Sentry-instrumented: sub_image is built from deploy/sub-agent.Dockerfile
     # and does not carry infra/. Visibility comes via runner/internal-API spans.
