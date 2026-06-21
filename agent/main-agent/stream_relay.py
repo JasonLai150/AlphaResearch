@@ -62,14 +62,16 @@ def relay(
         et = ev.get("type")
 
         if et == "message_start":
-            msg_id = ((ev.get("message") or {}).get("id")) or msg_id
+            # Real claude streams always carry message.id; reset (don't inherit the
+            # prior message's id) so a malformed start can't merge two messages.
+            msg_id = ((ev.get("message") or {}).get("id")) or ""
             text.clear()
         elif et == "content_block_delta":
             delta = ev.get("delta") or {}
             if delta.get("type") == "text_delta":
                 idx = int(ev.get("index", 0))
                 chunk = delta.get("text") or ""
-                if chunk:
+                if chunk:  # skip empty deltas — nothing to stream or accumulate
                     text[idx] = text.get(idx, "") + chunk
                     _token(idx, chunk, final=False)
         elif et == "content_block_stop":

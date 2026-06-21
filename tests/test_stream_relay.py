@@ -89,3 +89,17 @@ def test_multiple_messages_get_distinct_msg_ids():
 def test_blank_and_non_json_lines_are_skipped():
     lines = ["", "   ", "not json", json.dumps({"type": "system", "subtype": "init"})]
     assert _run(lines) == []
+
+
+def test_empty_text_delta_is_skipped():
+    lines = _lines(
+        {"type": "message_start", "message": {"id": "msg_E", "content": []}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": ""}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "hi"}},
+        {"type": "content_block_stop", "index": 0},
+    )
+    events = [b for p, b in _run(lines) if p == "/internal/events"]
+    # The empty delta is dropped; only the real chunk + the final marker remain.
+    assert [e["payload"]["delta"] for e in events] == ["hi", ""]
+    transcripts = [b for p, b in _run(lines) if p == "/internal/transcript"]
+    assert transcripts[0]["content"] == "hi"
