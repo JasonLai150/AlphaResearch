@@ -67,3 +67,8 @@ extend-immutable-calls = [
     "fastapi.Depends", "fastapi.Header", "fastapi.Query", "fastapi.Path",
     "fastapi.Body", "fastapi.Cookie", "fastapi.File", "fastapi.Form",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
