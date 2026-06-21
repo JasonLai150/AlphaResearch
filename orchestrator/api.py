@@ -8,6 +8,7 @@ and writes job/run/event records back to Redis which the SSE endpoint streams.
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -36,6 +37,10 @@ async def lifespan(app: FastAPI):
     if settings.runner_enabled:
         from runner.main import start_runner_tasks
         tasks = start_runner_tasks()
+    if settings.local_sim:
+        # Local dev: drive realistic runs into Redis instead of Cloud Run/Modal.
+        from runner.local_sim import local_sim_loop
+        tasks.append(asyncio.create_task(local_sim_loop()))
     try:
         yield
     finally:
@@ -97,6 +102,12 @@ async def create_session(body: CreateSession) -> dict:
     # Handoff: the runner consumes sessions:queue and launches the depth-0 main-agent.
     await store.enqueue_session(sid)
     return {"session_id": sid, "root_job_id": root}
+
+
+@app.get("/sessions")
+async def list_sessions(user_id: str) -> list[dict]:
+    """Chat history for the sidebar — the user's sessions, newest first."""
+    return [s.model_dump() for s in await store.list_user_sessions(user_id)]
 
 
 @app.get("/sessions/{sid}")

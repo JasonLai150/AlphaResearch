@@ -22,6 +22,7 @@ const STATUS_HEX: Record<AgentStatus, string> = {
   queued: "#7d8187",
   pending: "#7d8187",
   failed: "#ff7b72",
+  cancelled: "#7d8187",
 };
 
 interface Placed {

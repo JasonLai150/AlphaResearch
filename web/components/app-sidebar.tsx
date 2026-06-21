@@ -19,7 +19,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Eyebrow } from "@/components/eyebrow";
 import { cn } from "@/lib/utils";
-import type { ChatSummary, CurrentUser } from "@/lib/types";
+import type { CurrentUser, WireSession } from "@/lib/types";
 
 const NAV = [
   { key: "overview", label: "Overview", icon: LayoutGrid },
@@ -27,23 +27,37 @@ const NAV = [
   { key: "projects", label: "Projects", icon: FolderClosed },
 ] as const;
 
-// Match the brand focus ring the shadcn primitives apply, on the raw buttons.
 const focusRing =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
+function relTime(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(ms / 60000);
+  if (Number.isNaN(m) || m < 1) return "now";
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
 export function AppSidebar({
-  chats,
+  sessions,
+  activeId,
+  onSelect,
+  onNew,
   user,
 }: {
-  chats: ChatSummary[];
+  sessions: WireSession[];
+  activeId: string | null;
+  onSelect: (id: string) => void;
+  onNew: () => void;
   user: CurrentUser;
 }) {
   const [activeNav, setActiveNav] = useState<string>("overview");
-  const [activeChat, setActiveChat] = useState<string>(chats[0]?.id ?? "");
   const [filter, setFilter] = useState("");
 
-  const shown = chats.filter((c) =>
-    c.title.toLowerCase().includes(filter.trim().toLowerCase())
+  const shown = sessions.filter((s) =>
+    (s.goal || "").toLowerCase().includes(filter.trim().toLowerCase())
   );
 
   return (
@@ -82,6 +96,7 @@ export function AppSidebar({
             size="icon"
             className="size-6"
             aria-label="New chat"
+            onClick={onNew}
           >
             <Plus className="size-4" />
           </Button>
@@ -103,31 +118,33 @@ export function AppSidebar({
 
         <ScrollArea className="-mx-1 min-h-0 flex-1">
           <div className="flex flex-col gap-0.5 px-1">
-            {shown.map((c) => (
+            {shown.map((s) => (
               <button
-                key={c.id}
+                key={s.id}
                 type="button"
-                onClick={() => setActiveChat(c.id)}
-                aria-current={activeChat === c.id ? "true" : undefined}
+                onClick={() => onSelect(s.id)}
+                aria-current={activeId === s.id ? "true" : undefined}
                 className={cn(
                   "flex items-center gap-2 rounded-full border px-3.5 py-2 text-left transition-colors",
                   focusRing,
-                  activeChat === c.id
+                  activeId === s.id
                     ? "border-hairline bg-canvas-card text-ink"
                     : "border-transparent text-body hover:bg-canvas-soft"
                 )}
               >
                 <span className="line-clamp-1 flex-1 text-[13px]">
-                  {c.title}
+                  {s.goal || "Untitled session"}
                 </span>
                 <span className="shrink-0 text-[11px] text-mute">
-                  {c.updatedAt}
+                  {relTime(s.created_at)}
                 </span>
               </button>
             ))}
-            {shown.length === 0 && (
+            {!shown.length && (
               <p className="px-3 py-6 text-center text-[12px] text-mute">
-                No chats match “{filter}”.
+                {sessions.length
+                  ? `No chats match “${filter}”.`
+                  : "No sessions yet — start one below."}
               </p>
             )}
           </div>

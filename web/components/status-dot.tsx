@@ -7,6 +7,7 @@ const DOT: Record<AgentStatus, string> = {
   queued: "bg-mute",
   pending: "bg-mute",
   failed: "bg-destructive",
+  cancelled: "bg-mute",
 };
 
 const LABEL: Record<AgentStatus, string> = {
@@ -15,6 +16,7 @@ const LABEL: Record<AgentStatus, string> = {
   queued: "Queued",
   pending: "Pending",
   failed: "Failed",
+  cancelled: "Cancelled",
 };
 
 /** A small status indicator. Decorative dot + a screen-reader status label. */

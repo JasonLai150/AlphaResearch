@@ -1,21 +1,38 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowUp } from "lucide-react";
+import { ArrowUp, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 
-/** The message composer pinned to the bottom of the transcript column. */
-export function ChatComposer() {
+/** Message composer — submits a goal (new session) or a follow-up turn. */
+export function ChatComposer({
+  onSubmit,
+  placeholder = "Message the lead agent…",
+  busy = false,
+  hint = "Enter to send · Shift+Enter for a new line",
+}: {
+  onSubmit: (text: string) => void | Promise<void>;
+  placeholder?: string;
+  busy?: boolean;
+  hint?: string;
+}) {
   const [value, setValue] = useState("");
-  const canSend = value.trim().length > 0;
+  const canSend = value.trim().length > 0 && !busy;
+
+  async function submit() {
+    if (!canSend) return;
+    const text = value.trim();
+    setValue("");
+    await onSubmit(text);
+  }
 
   return (
     <div className="border-t border-hairline px-4 py-3 md:px-6">
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          if (canSend) setValue("");
+          void submit();
         }}
         className="mx-auto flex max-w-3xl items-end gap-2 rounded-lg border border-hairline bg-canvas-soft px-3 py-2 transition-colors focus-within:ring-2 focus-within:ring-ring"
       >
@@ -25,13 +42,14 @@ export function ChatComposer() {
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
-              if (canSend) setValue("");
+              void submit();
             }
           }}
           rows={1}
-          placeholder="Message the lead agent…"
-          aria-label="Message the lead agent"
-          className="max-h-40 flex-1 resize-none bg-transparent py-1.5 text-sm text-ink placeholder:text-mute focus:outline-none"
+          placeholder={placeholder}
+          aria-label={placeholder}
+          disabled={busy}
+          className="max-h-40 flex-1 resize-none bg-transparent py-1.5 text-sm text-ink placeholder:text-mute focus:outline-none disabled:opacity-60"
         />
         <Button
           type="submit"
@@ -40,11 +58,15 @@ export function ChatComposer() {
           disabled={!canSend}
           aria-label="Send message"
         >
-          <ArrowUp className="size-4" />
+          {busy ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <ArrowUp className="size-4" />
+          )}
         </Button>
       </form>
       <p className="mx-auto mt-2 max-w-3xl text-center text-[11px] text-mute">
-        Enter to send · Shift+Enter for a new line
+        {hint}
       </p>
     </div>
   );

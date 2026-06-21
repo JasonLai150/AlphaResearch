@@ -516,6 +516,23 @@ async def list_artifacts_for(job_id: str) -> list[ArtifactRef]:
     return out
 
 
+# ---- session listing (sidebar chat history) ----------------------------
+
+async def list_user_sessions(user_id: str, limit: int = 100) -> list[Session]:
+    """All sessions owned by a user, newest first. Scans the bare session:* keys
+    (skipping session:{sid}:events/budget/...). Fine at demo scale."""
+    r = get_redis()
+    out: list[Session] = []
+    async for k in r.scan_iter("session:*", count=200):
+        if k.count(":") != 1:  # skip session:{sid}:events / :budget / :transcript / ...
+            continue
+        doc = await r.json().get(k)
+        if doc and doc.get("user_id") == user_id:
+            out.append(Session.model_validate(doc))
+    out.sort(key=lambda s: s.created_at, reverse=True)
+    return out[:limit]
+
+
 # ---- full session read (chat resume endpoint) --------------------------
 
 async def read_full_session(sid: str) -> dict:

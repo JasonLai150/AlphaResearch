@@ -120,6 +120,13 @@ class Settings(BaseSettings):
         default=True,
         validation_alias=AliasChoices("ALPHA_RUNNER_ENABLED"),
     )
+    # Local dev only: when true, the API plays a scripted research run per session
+    # (runner/local_sim.py) instead of spawning Cloud Run / Modal — so the full web
+    # app works locally with no cloud credentials. Keep FALSE in production.
+    local_sim: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("ALPHA_LOCAL_SIM"),
+    )
 
 
 settings = Settings()

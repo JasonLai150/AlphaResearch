@@ -39,7 +39,13 @@ export const API_BASE =
 // Presentation-layer types for the Overview dashboard. These stay decoupled
 // from the wire types above so the SSE stream can be mapped onto them later.
 
-export type AgentStatus = "running" | "queued" | "done" | "failed" | "pending";
+export type AgentStatus =
+  | "running"
+  | "queued"
+  | "done"
+  | "failed"
+  | "pending"
+  | "cancelled";
 
 export interface ChatSummary {
   id: string;
@@ -85,6 +91,8 @@ export interface Subagent {
   reward?: number;
   /** Shown when no reward is available yet (e.g. "queued"). */
   note?: string;
+  /** Reward curve for the inline sparkline. */
+  rewards?: MetricPoint[];
 }
 
 export interface CurrentUser {
@@ -93,3 +101,114 @@ export interface CurrentUser {
   role: string;
   initials: string;
 }
+
+// ─── Wire types (mirror infra/schemas.py) ────────────────────────────────────
+
+export interface WireSession {
+  id: string;
+  user_id: string;
+  goal: string;
+  mode: string;
+  status: string;
+  created_at: string;
+  root_job_id?: string | null;
+}
+
+export interface WireJob {
+  id: string;
+  session_id: string;
+  parent_job_id: string | null;
+  depth: number;
+  kind: string;
+  status: string;
+  params: Record<string, any>;
+  backend: string;
+  sandbox_id: string | null;
+  created_at: string;
+}
+
+export interface WireRun {
+  job_id: string;
+  status: string;
+  summary: string;
+  metrics: Record<string, any>;
+  created_at: string;
+}
+
+export interface WireArtifact {
+  id: string;
+  job_id: string;
+  kind: string;
+  url: string;
+  caption: string | null;
+  bytes: number;
+}
+
+export interface WireMessage {
+  session_id: string;
+  job_id: string;
+  role: string;
+  content: string;
+  tool_name: string | null;
+  tool_input: Record<string, any> | null;
+  ts: string;
+}
+
+export interface FullSession {
+  session: WireSession | null;
+  jobs: WireJob[];
+  runs: WireRun[];
+  tree: Record<string, string[]>;
+  transcript: WireMessage[];
+  artifacts: WireArtifact[];
+}
+
+// ─── Live view models (built by the reducer from the event stream) ───────────
+
+export interface MetricPoint {
+  step: number;
+  reward: number;
+}
+
+export interface JobView {
+  id: string;
+  parentId: string | null;
+  depth: number;
+  kind: string;
+  status: AgentStatus;
+  goal?: string;
+  strategy?: string;
+  summary?: string;
+  lastReward?: number;
+  rewards: MetricPoint[];
+  artifacts: WireArtifact[];
+  /** Insertion order, for stable sibling labels (A/B/C). */
+  order: number;
+}
+
+export interface TranscriptItem {
+  id: string;
+  role: "user" | "assistant" | "tool" | "system";
+  text: string;
+  toolName?: string;
+}
+
+export interface SessionState {
+  sessionId: string | null;
+  goal: string;
+  rootId: string | null;
+  jobs: Record<string, JobView>;
+  /** Job ids in first-seen order. */
+  order: string[];
+  transcript: TranscriptItem[];
+  lastEventId: string | null;
+}
+
+/** SSE connection lifecycle, surfaced to the UI. */
+export type ConnPhase =
+  | "idle"
+  | "connecting"
+  | "streaming"
+  | "reconnecting"
+  | "error"
+  | "closed";
