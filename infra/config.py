@@ -128,6 +128,16 @@ class Settings(BaseSettings):
         default="/mnt/alpha-volumes",
         validation_alias=AliasChoices("ALPHA_VOLUME_ROOT"),
     )
+    # Standing warm sub-agent containers (Modal min_containers). Default 1 keeps a
+    # single container hot so the first dispatch of a session skips the image-pull
+    # cold start. A fan-out spawns one sub-agent per idea, so only the first is warm
+    # and the rest cold-start; set ALPHA_SUBAGENT_WARM_POOL to the demo's fan-out size
+    # (e.g. max_fanout=3) for an all-warm fan-out, or 0 after the demo to drop idle
+    # cost to zero. Read at deploy time by infra/modal_app.py's @app.function decorator.
+    subagent_warm_pool: int = Field(
+        default=1,
+        validation_alias=AliasChoices("ALPHA_SUBAGENT_WARM_POOL"),
+    )
 
     # ---- Cloud Run (main-agent job) ----------------------------------------
     gcp_project: str = Field(

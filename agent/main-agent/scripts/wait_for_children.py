@@ -8,8 +8,9 @@ local files.
 Each poll it queries:
     GET {ALPHA_INTERNAL_RUNNER_URL}/internal/children/{ALPHA_JOB_ID}
 with header `Authorization: Bearer ${ALPHA_INTERNAL_TOKEN}`, builds the set of
-job_ids whose row is terminal (row["done"] is true OR status in {done,failed}),
-removes those from the pending set, then sleeps `--poll-sec`.
+job_ids whose row is terminal (row["done"] is true OR status in
+{done,failed,cancelled}), removes those from the pending set, then sleeps
+`--poll-sec`.
 
 Usage:
     wait_for_children.py JOB_ID [JOB_ID ...] [--timeout 1800] [--poll-sec 5.0]
@@ -45,7 +46,11 @@ def _runner_url() -> str:
 def _is_terminal(row: dict) -> bool:
     if row.get("done") is True:
         return True
-    return row.get("status") in {"done", "failed"}
+    # "cancelled" is terminal but carries NO RunResult (so done=False) — the runner
+    # reaps orphaned/parent-terminal children without writing one (see
+    # runner/loops.py:_cancel_orphans_if_terminal). Omitting it here made the main
+    # agent block on a cancelled child until --timeout instead of synthesizing.
+    return row.get("status") in {"done", "failed", "cancelled"}
 
 
 def fetch_children(base_url: str, job_id: str, token: str) -> list:
