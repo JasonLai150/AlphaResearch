@@ -32,6 +32,7 @@ dev = [
     "numpy>=1.26",
     "fakeredis[json,lua]>=2.26",
     "httpx>=0.27",
+    "plotly>=5.24",   # main-agent renders synthesis graphs via scripts/render_graph.py
 ]
 # The real prebaked trainer stack lives in the Modal image (infra/modal_app.py),
 # NOT installed locally (envpool has no macOS wheels). Listed here for reference.

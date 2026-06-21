@@ -50,6 +50,29 @@ def fetch_artifacts(base_url: str, parent_job_id: str, token: str) -> dict:
     return data
 
 
+_MAX_CHARS = 20_000  # source-side context cap (the cap_bash_output backstop uses the same)
+
+
+def _render_artifacts(artifacts: list, max_chars: int = _MAX_CHARS) -> str:
+    """Full pretty JSON when small; a metadata-only trimmed view + notice when the
+    list would blow the director's context. The gs:// urls stay reachable for detail."""
+    full = json.dumps(artifacts, indent=2)
+    if len(full) <= max_chars:
+        return full
+    shown: list = []
+    for a in artifacts:
+        compact = {k: a.get(k) for k in ("name", "kind", "url")} if isinstance(a, dict) else a
+        if len(json.dumps(shown + [compact], indent=2)) > max_chars:
+            break
+        shown.append(compact)
+    notice = (
+        f"\n[read_artifacts: showing {len(shown)} of {len(artifacts)} artifacts "
+        f"(metadata only) to fit the {max_chars}-char context cap. Open a specific "
+        "gs:// url for full detail, or query one job_id at a time.]"
+    )
+    return json.dumps(shown, indent=2) + notice
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 1:
         print("usage: read_artifacts.py <job_id>", file=sys.stderr)
@@ -72,7 +95,7 @@ def main(argv: list[str]) -> int:
         return 0
 
     artifacts = data.get(job_id, [])
-    print(json.dumps(artifacts, indent=2))
+    print(_render_artifacts(artifacts))
     return 0
 
 

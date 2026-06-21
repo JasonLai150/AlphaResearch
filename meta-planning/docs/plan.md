@@ -32,6 +32,11 @@ pure Redis Stream tailer.
   Volume, so `reload_volume()` must hydrate via the Modal SDK (or sub-agents push results) before a
   live run completes — see `docs/backend-mvp-notes.md`. Real RL training + web demo still pending.
 
+## Competence direction (post-MVP)
+Make the director more competent on 3 axes — sharper single session, cross-chat continuity,
+long-horizon self-improvement — via one primitive: a verification-gated, conditions-stamped
+**Findings Store** (persist verified facts, regenerate plans fresh). See [`competence-plan.md`](./competence-plan.md).
+
 ## Next (milestones — see tasks.md for granular checkboxes)
 - M0 ✅ tests · M1 ✅ runner · M2 ✅ containers · M7 ✅ deploy tooling — delivered in PR #8.
 - Phase 1 visibility: add Sentry traces/logs around the API, runner, internal API, Cloud Run

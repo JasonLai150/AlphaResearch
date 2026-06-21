@@ -140,7 +140,15 @@ gcloud run jobs "${CMD}" "${AGENT_JOB}" \
     --set-secrets="ANTHROPIC_API_KEY=anthropic-api-key:latest" \
     --set-env-vars="ALPHA_INTERNAL_RUNNER_URL=${URL}"
 
+echo "==> Deployed. Verifying GCP runtime health (not just gcloud exit codes)..."
+# Self-check the live deployment: service revision Ready, /health, error logs, and a
+# real main-agent Job smoke execution. Set SKIP_VERIFY=1 to skip (e.g. fast iteration).
+if [ "${SKIP_VERIFY:-0}" != "1" ]; then
+    PROJECT="${PROJECT}" REGION="${REGION}" SERVICE="${SERVICE}" AGENT_JOB="${AGENT_JOB}" \
+        "$(dirname "$0")/verify_deploy.sh"
+fi
+
 echo "==> Deployed."
 echo "    Service:  ${URL}"
-echo "    Smoke:    curl ${URL}/healthz"
+echo "    Verify:   ./scripts/verify_deploy.sh   (re-run anytime)"
 echo "    Reminder: deploy sub-agents to Modal:  modal deploy infra/modal_app.py"

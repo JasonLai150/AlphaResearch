@@ -101,9 +101,14 @@ shared secret (SEV-4).
 ## 4. Verify
 
 ```bash
+# Quickest: one command that checks the whole GCP runtime (revision Ready, live
+# /health, error logs, a real main-agent Job smoke execution, Modal):
+./scripts/verify_deploy.sh
+
+# Or by hand:
 URL=$(gcloud run services describe alpha-api --region=us-central1 \
         --format='value(status.url)')
-curl "$URL/healthz"                                   # {"ok": true}
+curl "$URL/health"                                    # {"ok": true}  (NOT /healthz — GFE 404s that path)
 curl -XPOST "$URL/sessions" -H 'content-type: application/json' \
      -d '{"user_id":"u_1","goal":"improve sample efficiency on DoorKey"}'
 # -> {"session_id":"s_...","root_job_id":"j_..."}
