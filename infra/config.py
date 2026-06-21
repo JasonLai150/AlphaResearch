@@ -6,14 +6,28 @@ Most settings use the ALPHA_ prefix; a few honor external conventions
 
 from __future__ import annotations
 
-from pydantic import AliasChoices, Field
+from pathlib import Path
+
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Resolve .env against the repo root (this file is infra/config.py) so the working
+# directory doesn't matter — launching from web/ or anywhere else loads the same .env
+# instead of silently falling back to defaults. In prod (Cloud Run) config comes from
+# injected env vars, which take precedence, and .env is absent from the image, so this
+# path simply finds nothing and behavior is unchanged.
+_ENV_FILE = str(Path(__file__).resolve().parent.parent / ".env")
+
+# redis-py's from_url() only accepts these schemes; anything else raises deep inside a
+# swallowed loop exception (leadership_loop) and the runner silently never leads. Validate
+# at Settings load so a malformed ALPHA_REDIS_URL secret fails LOUDLY on boot instead.
+_VALID_REDIS_SCHEMES = ("redis://", "rediss://", "unix://")
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="ALPHA_",
-        env_file=".env",
+        env_file=_ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -23,6 +37,22 @@ class Settings(BaseSettings):
         default="redis://localhost:6379/0",
         validation_alias=AliasChoices("ALPHA_REDIS_URL", "REDIS_URL"),
     )
+
+    @field_validator("redis_url")
+    @classmethod
+    def _require_redis_scheme(cls, v: str) -> str:
+        # Strip surrounding whitespace (a stray newline/space before the scheme also
+        # trips from_url) and reject anything without a valid scheme — e.g. a bare
+        # host:port, or a pasted "ALPHA_REDIS_URL=redis://..." env line stored verbatim
+        # as the secret value (a real incident: it buries the scheme mid-string).
+        s = v.strip()
+        if not s.startswith(_VALID_REDIS_SCHEMES):
+            raise ValueError(
+                "ALPHA_REDIS_URL must start with redis://, rediss://, or unix:// — got a "
+                "value with no valid scheme at the front (bare host:port, or a verbatim "
+                "'ALPHA_REDIS_URL=...' env line). Fix the secret/env value."
+            )
+        return s
 
     # Dispatch
     dispatch_backend: str = "local"  # "local" | "modal"
@@ -120,6 +150,38 @@ class Settings(BaseSettings):
         default=True,
         validation_alias=AliasChoices("ALPHA_RUNNER_ENABLED"),
     )
+    # Local dev only: when true, the API plays a scripted research run per session
+    # (runner/local_sim.py) instead of spawning Cloud Run / Modal — so the full web
+    # app works locally with no cloud credentials. Keep FALSE in production.
+    local_sim: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("ALPHA_LOCAL_SIM"),
+    )
+
+    # ---- Auth (optional Clerk verification on the public API) ----------------
+    # When clerk_jwks_url is set, public endpoints require a verified Clerk JWT
+    # and derive user_id from its `sub`. Unset = open dev mode (caller-supplied id).
+    clerk_jwks_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ALPHA_CLERK_JWKS_URL", "CLERK_JWKS_URL"),
+    )
+    clerk_issuer: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ALPHA_CLERK_ISSUER", "CLERK_ISSUER"),
+    )
+    clerk_audience: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ALPHA_CLERK_AUDIENCE", "CLERK_AUDIENCE"),
+    )
+
+    @model_validator(mode="after")
+    def _auth_requires_issuer(self) -> "Settings":
+        # Fail fast: verifying JWKS-signed tokens without an issuer check is unsafe.
+        if self.clerk_jwks_url and not self.clerk_issuer:
+            raise ValueError(
+                "ALPHA_CLERK_ISSUER is required when ALPHA_CLERK_JWKS_URL is set"
+            )
+        return self
 
     # ---- Agent OTEL telemetry (Layer A: inject into agent subprocess env) ------
     # Opt-in: set agent_otel_enabled=true AND otel_otlp_endpoint to activate.

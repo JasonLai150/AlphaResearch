@@ -1,139 +1,228 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { API_BASE, EventEnvelope, JobNode } from "@/lib/types";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, Menu, Network, Sparkles } from "lucide-react";
 
-// Minimal P0 shell: submit a goal, open the session SSE stream, and render the
-// live agent tree (one card per job) + a log feed. Phase 4 fleshes this out with
-// the recharts metric charts and a proper tree layout.
-export default function Home() {
-  const [goal, setGoal] = useState(
-    "Improve PPO sample efficiency on MiniGrid-DoorKey-8x8"
+import { useAppAuth } from "@/components/auth/app-auth";
+import { AppSidebar } from "@/components/app-sidebar";
+import { ChatComposer } from "@/components/chat-composer";
+import { ChatTranscript } from "@/components/chat-transcript";
+import { ContextBar } from "@/components/context-bar";
+import { Eyebrow } from "@/components/eyebrow";
+import { SessionHeader } from "@/components/session-header";
+import { TreePanel } from "@/components/tree-panel";
+import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { useChatSubmit } from "@/hooks/use-chat-submit";
+import { useSession } from "@/hooks/use-session";
+import { useSessions } from "@/hooks/use-sessions";
+import {
+  artifactsOf,
+  rootJob,
+  subagentsOf,
+  treeOf,
+} from "@/lib/session-reducer";
+import type { RepoContext, TranscriptItem } from "@/lib/types";
+
+export default function Page() {
+  const { userId, getToken } = useAppAuth();
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [treeOpen, setTreeOpen] = useState(false);
+
+  const { sessions, loading, refresh } = useSessions(userId, getToken);
+  const { state, phase, notFound, reconnect } = useSession(activeId, getToken);
+
+  function select(id: string | null) {
+    setActiveId(id);
+    setSidebarOpen(false);
+    setTreeOpen(false);
+    const url = new URL(window.location.href);
+    if (id) url.searchParams.set("s", id);
+    else url.searchParams.delete("s");
+    window.history.replaceState({}, "", url.toString());
+  }
+
+  const { busy, pending, optimistic, onSubmit, settle, reconcile } =
+    useChatSubmit({
+      activeId,
+      userId,
+      getToken,
+      onCreate: (sessionId) => {
+        select(sessionId);
+        // The sessions hook polls every 8s; one immediate refresh surfaces the
+        // new chat in the sidebar without waiting for the next tick.
+        refresh();
+      },
+    });
+
+  // Restore the active session from the URL (?s=) on first load.
+  useEffect(() => {
+    const s = new URLSearchParams(window.location.search).get("s");
+    if (s) setActiveId(s);
+  }, []);
+
+  // Stop the "working" indicator once the assistant replies (#3).
+  const lastRole = state.transcript[state.transcript.length - 1]?.role;
+  useEffect(() => {
+    if (lastRole === "assistant") settle();
+  }, [lastRole, state.transcript.length, settle]);
+
+  // Reconcile the optimistic echo (#8): once the server transcript carries a
+  // matching user message, drop the local echo so it never double-renders.
+  const serverEchoed = useMemo(() => {
+    if (!optimistic) return false;
+    return state.transcript.some(
+      (t) => t.role === "user" && t.text === optimistic.text
+    );
+  }, [optimistic, state.transcript]);
+  useEffect(() => {
+    reconcile(serverEchoed);
+  }, [serverEchoed, reconcile]);
+
+  // Merge the optimistic user echo into the rendered transcript until the
+  // server confirms it (#8). Never append when the server already has it.
+  const items: TranscriptItem[] = useMemo(() => {
+    if (optimistic && !serverEchoed) return [...state.transcript, optimistic];
+    return state.transcript;
+  }, [optimistic, serverEchoed, state.transcript]);
+
+  const root = rootJob(state);
+  // Working while the lead agent is active, or a follow-up is awaiting a reply.
+  // (A parked, queued sub-agent shouldn't keep the indicator spinning forever.)
+  const running =
+    (root
+      ? root.status === "running" || root.status === "pending"
+      : phase === "connecting" || phase === "streaming") || pending;
+
+  // Build the execution-context chips from REAL session fields (#11): backend
+  // env, mode, a short session id, and the relative started-time. Chips with no
+  // real source are dropped by ContextBar (empty label).
+  const ctx: RepoContext = {
+    env: state.backend ?? "",
+    repo: activeId ? activeId.slice(0, 8) : "",
+    branch: state.mode ?? "",
+    worktree: state.startedAt ?? "",
+  };
+
+  const tree = treeOf(state);
+  const subagents = subagentsOf(state);
+  const artifacts = artifactsOf(state);
+
+  const sidebar = (
+    <AppSidebar
+      sessions={sessions}
+      activeId={activeId}
+      onSelect={(id) => select(id)}
+      onNew={() => select(null)}
+      loading={loading}
+    />
   );
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [jobs, setJobs] = useState<Record<string, JobNode>>({});
-  const [feed, setFeed] = useState<string[]>([]);
-  const esRef = useRef<EventSource | null>(null);
 
-  async function start() {
-    esRef.current?.close();
-    setJobs({});
-    setFeed([]);
-    const res = await fetch(`${API_BASE}/sessions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ goal }),
-    });
-    const { session_id } = await res.json();
-    setSessionId(session_id);
-
-    const es = new EventSource(`${API_BASE}/sessions/${session_id}/stream`);
-    esRef.current = es;
-    const types = ["log", "metric", "status", "spawn", "artifact", "summary"];
-    for (const t of types) {
-      es.addEventListener(t, (e) =>
-        apply(JSON.parse((e as MessageEvent).data) as EventEnvelope)
-      );
-    }
-  }
-
-  function apply(ev: EventEnvelope) {
-    setJobs((prev) => {
-      const j: JobNode = prev[ev.job_id] ?? {
-        jobId: ev.job_id,
-        parentJobId: ev.parent_job_id,
-        depth: ev.depth,
-        status: "pending",
-        rewards: [],
-        artifacts: [],
-        logs: [],
-      };
-      const next = { ...j };
-      const p = ev.payload || {};
-      if (ev.type === "status") next.status = p.status ?? next.status;
-      if (ev.type === "spawn") {
-        next.kind = p.kind;
-        next.goal = p.goal;
-        next.status = "running";
-      }
-      const mReward =
-        typeof p.reward === "number"
-          ? p.reward
-          : typeof p.metrics?.reward === "number"
-          ? p.metrics.reward
-          : undefined;
-      const mStep = p.step ?? p.metrics?.step ?? 0;
-      if (ev.type === "metric" && typeof mReward === "number") {
-        next.rewards = [...next.rewards, { step: mStep, reward: mReward }];
-        next.lastReward = mReward;
-      }
-      if (ev.type === "artifact" && p.url)
-        next.artifacts = [...next.artifacts, { url: p.url, caption: p.caption }];
-      if (ev.type === "summary") {
-        next.summary = p.summary;
-        next.status = "done";
-      }
-      if (ev.type === "log" && p.text)
-        next.logs = [...next.logs, String(p.text)].slice(-5);
-      return { ...prev, [ev.job_id]: next };
-    });
-    if (ev.type === "summary" || ev.type === "status") {
-      setFeed((f) =>
-        [
-          ...f,
-          `[${ev.type}] ${ev.job_id}: ${ev.payload?.summary ?? ev.payload?.status ?? ""}`,
-        ].slice(-50)
-      );
-    }
-  }
-
-  const nodes = Object.values(jobs).sort((a, b) => a.depth - b.depth);
+  const rightRail = (
+    <TreePanel tree={tree} subagents={subagents} artifacts={artifacts} />
+  );
 
   return (
-    <main className="grid">
-      <section className="panel">
-        <h2>AlphaResearch</h2>
-        <p className="muted">Give the lead agent a research goal.</p>
-        <input value={goal} onChange={(e) => setGoal(e.target.value)} />
-        <button onClick={start}>Run</button>
-        {sessionId && <p className="muted">session: {sessionId}</p>}
-        <h3>Feed</h3>
-        {feed.map((line, i) => (
-          <div key={i} className="log">
-            {line}
-          </div>
-        ))}
-      </section>
+    <TooltipProvider delayDuration={150}>
+      <div className="flex h-screen w-full overflow-hidden bg-canvas text-ink">
+        {/* Desktop sidebar (≥ md). Below md it becomes a slide-over drawer. */}
+        <div className="hidden w-[264px] shrink-0 md:flex">{sidebar}</div>
+        <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+          <SheetContent side="left" className="w-[300px] p-0">
+            {sidebar}
+          </SheetContent>
+        </Sheet>
 
-      <section className="panel">
-        <h3>Agent tree</h3>
-        {nodes.length === 0 && <p className="muted">No jobs yet.</p>}
-        {nodes.map((j) => (
-          <div key={j.jobId} className="card" style={{ marginLeft: j.depth * 16 }}>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <strong>{j.goal ?? j.jobId}</strong>
-              <span className={`badge ${j.status}`}>{j.status}</span>
-            </div>
-            {j.lastReward !== undefined && (
-              <div className="muted">reward: {j.lastReward.toFixed(3)}</div>
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {/* Mobile / tablet top bar with drawer triggers. */}
+          <header className="flex items-center gap-2 border-b border-hairline px-3 py-3 xl:hidden">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 md:hidden"
+              aria-label="Open chats"
+              onClick={() =>
+                activeId ? select(null) : setSidebarOpen(true)
+              }
+            >
+              {activeId ? (
+                <ArrowLeft className="size-4" />
+              ) : (
+                <Menu className="size-4" />
+              )}
+            </Button>
+            <Sparkles className="size-4 text-sunset md:hidden" aria-hidden />
+            <span className="flex-1 truncate text-sm">Alpha Research</span>
+            {activeId && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8"
+                aria-label="Open agent tree"
+                onClick={() => setTreeOpen(true)}
+              >
+                <Network className="size-4" />
+              </Button>
             )}
-            {j.summary && <div>{j.summary}</div>}
-            {j.artifacts.map((a, i) => (
-              <img
-                key={i}
-                className="artifact"
-                src={a.url.startsWith("http") ? a.url : `${API_BASE}${a.url}`}
-                alt={a.caption ?? ""}
+          </header>
+
+          {activeId ? (
+            <>
+              <SessionHeader
+                goal={state.goal}
+                status={root?.status}
+                phase={phase}
+                startedAt={state.startedAt}
+                onReconnect={reconnect}
+                notFound={notFound}
               />
-            ))}
-            {j.logs.map((l, i) => (
-              <div key={i} className="log">
-                {l}
+              {!notFound && (
+                <>
+                  <ContextBar ctx={ctx} />
+                  <ChatTranscript items={items} running={running} />
+                  <ChatComposer
+                    onSubmit={onSubmit}
+                    busy={busy}
+                    placeholder="Reply to the lead agent…"
+                  />
+                </>
+              )}
+            </>
+          ) : (
+            <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-6 px-6">
+              <div className="flex flex-col items-center gap-3 text-center">
+                <Sparkles className="size-7 text-sunset" aria-hidden />
+                <Eyebrow>New research session</Eyebrow>
+                <h1 className="max-w-xl text-2xl tracking-[-0.02em] text-ink">
+                  What should the lead agent investigate?
+                </h1>
+                <p className="max-w-md text-sm text-mute">
+                  Describe a research goal. The lead agent scopes it, fans out
+                  independent sub-agents, and streams results back here live.
+                </p>
               </div>
-            ))}
-          </div>
-        ))}
-      </section>
-    </main>
+              <div className="w-full max-w-2xl">
+                <ChatComposer
+                  onSubmit={onSubmit}
+                  busy={busy}
+                  placeholder="e.g. Improve PPO sample efficiency on MiniGrid-DoorKey-8x8…"
+                  hint="Press Enter to start the run"
+                />
+              </div>
+            </div>
+          )}
+        </main>
+
+        {/* Desktop right rail (≥ xl). Below xl it becomes a slide-over drawer. */}
+        <div className="hidden w-[320px] shrink-0 xl:flex">{rightRail}</div>
+        <Sheet open={treeOpen} onOpenChange={setTreeOpen}>
+          <SheetContent side="right" className="w-[340px] p-0">
+            {rightRail}
+          </SheetContent>
+        </Sheet>
+      </div>
+    </TooltipProvider>
   );
 }

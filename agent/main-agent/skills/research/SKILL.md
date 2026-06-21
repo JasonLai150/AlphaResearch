@@ -11,6 +11,24 @@ deterministic dispatch script revalidates it, and the PreToolUse hook
 revalidates it again on every `Bash` call. If it's malformed, you cannot
 dispatch.
 
+## Demo guardrails — HARD constraints (the dispatch hook enforces these)
+
+This deployment runs a **fixed, tiny, fast** RL problem so every run finishes in seconds
+and is reliable. The schema **rejects** anything outside these — don't fight it:
+
+- **`env_id` MUST be `"MiniGrid-Empty-5x5-v0"`** (the only allowed env).
+- **`budget_steps` ≤ 50000** (use 50000).
+- **`base_hparams` keys MUST be trainer knobs:** `learning_rate, ent_coef, num_steps,
+  gamma, gae_lambda, clip_coef, vf_coef, max_grad_norm, update_epochs, num_minibatches,
+  hidden_size, norm_adv, anneal_lr`. Set a sensible PPO baseline, e.g.
+  `{"learning_rate": 2.5e-4, "ent_coef": 0.01, "hidden_size": 64}`.
+- **Ideas are hyperparameter interventions on those knobs.** A sub-agent runs the prebaked
+  `train_ppo.py` with `--intervention "k=v"`; each idea's `approach` says which knob(s) it
+  changes (e.g. exploration → `ent_coef=0.05`; optimizer → `learning_rate=1e-3` or
+  `norm_adv=false`; architecture → `hidden_size=128`). **Use 2–3 ideas** for a snappy fan-out.
+- **Skip Phase 1's web search / baseline hunt** — the scaffold is fixed. Go straight to
+  proposing 2–3 diverse knob interventions, adversarially trim, and write the plan.
+
 ## Output: the ResearchPlan object
 
 Schema lives in `scripts/schemas.py` (`ResearchPlan`, `ResearchIdea`,
@@ -20,18 +38,18 @@ Schema lives in `scripts/schemas.py` (`ResearchPlan`, `ResearchIdea`,
 {
   "id": "plan_<auto>",
   "goal": "<user goal, restated precisely>",
-  "env_id": "<single env id, e.g. MiniGrid-DoorKey-8x8>",
+  "env_id": "MiniGrid-Empty-5x5-v0",
   "reward_fn_spec": "<one paragraph describing the reward; FROZEN across sub-agents>",
-  "base_hparams": { "<name>": "<value>", "...": "..." },
-  "target_metric": "<single scalar metric, e.g. mean_return_at_500k_steps>",
-  "budget_steps": 500000,
+  "base_hparams": { "learning_rate": 2.5e-4, "ent_coef": 0.01, "hidden_size": 64 },
+  "target_metric": "mean_return_at_50k_steps",
+  "budget_steps": 50000,
   "ideas": [
     {
       "id": "idea_<auto>",
       "title": "<short-kebab-tag>",
       "diversity_tag": "exploration | reward_shaping | architecture | optimizer | regularization | data | algorithm | other",
       "hypothesis": "<1-3 sentences: what you expect to happen and why>",
-      "approach": "<concrete intervention the sub-agent will implement>",
+      "approach": "set <knob>=<value> via --intervention (e.g. ent_coef=0.05)",
       "success_criterion": "<observable result that would validate this idea>",
       "expected_metric_delta": 0.05
     }
@@ -42,10 +60,12 @@ Schema lives in `scripts/schemas.py` (`ResearchPlan`, `ResearchIdea`,
 You can omit auto-generated `id` fields; the schema fills them in. The
 PreToolUse hook will reject the dispatch if:
 
-- `< 2` or `> 5` ideas
+- `env_id` is not `MiniGrid-Empty-5x5-v0` (the only allowed env)
+- `budget_steps` > 50000
+- `base_hparams` is empty or has keys that aren't trainer knobs (see guardrails above)
+- `< 2` or `> 5` ideas (use 2–3)
 - duplicate idea ids or titles
 - one `diversity_tag` dominates (more than `ceil(n/2)` ideas share it)
-- `base_hparams` is empty
 - any required field is empty / missing
 
 ## Process (do each phase, in order)

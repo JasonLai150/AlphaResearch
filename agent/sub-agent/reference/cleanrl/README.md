@@ -1,16 +1,19 @@
 # CleanRL reference implementations
 
-Single-file PPO references vendored from [CleanRL](https://github.com/vwxyzjn/cleanrl)
-(`cleanrl/` on `master`). They are **reference code to read and adapt**, not a
-library to import. Copy the closest one into your working dir and modify it for
-your assigned idea — do not edit these originals.
+> **Background reading only — you do NOT copy or adapt these.** Sub-agents run
+> experiments via the prebaked `scripts/train_ppo.py` (knob overrides), per
+> `CLAUDE.md`. These single-file PPO implementations are here to *understand* how
+> the training works — not to fork.
 
-| File | Use it for |
-|------|-----------|
-| `ppo_minigrid_envpool.py` | **PPO on MiniGrid via envpool** — the dict-obs encode + episode-return bridge. **Start here for MiniGrid tasks.** |
-| `ppo.py` | Discrete-action PPO on gym `SyncVectorEnv` (steps envs one-at-a-time in Python — slow). Read for the PPO core; prefer the envpool version above for MiniGrid. |
-| `ppo_atari_envpool.py` | PPO wired to **envpool** with an Atari CNN. Read for the generic envpool `make()` / step pattern. |
-| `ppo_continuous_action.py` | Continuous-action PPO. Base for **MuJoCo** tasks (Ant, HalfCheetah, Hopper, Humanoid, Walker2d, ...). |
+Single-file PPO references vendored from [CleanRL](https://github.com/vwxyzjn/cleanrl)
+(`cleanrl/` on `master`).
+
+| File | Read it to understand |
+|------|-----------------------|
+| `ppo_minigrid_envpool.py` | **PPO on MiniGrid via envpool** — the clearest single-file read for the envpool dict-obs encode + episode-return tracking that `scripts/train_ppo.py` does internally. |
+| `ppo.py` | The discrete-action PPO core (on gym `SyncVectorEnv`). |
+| `ppo_atari_envpool.py` | The generic envpool `make()` / step pattern (with an Atari CNN). |
+| `ppo_continuous_action.py` | Continuous-action PPO (the MuJoCo shape). |
 
 ## Environments in this container
 

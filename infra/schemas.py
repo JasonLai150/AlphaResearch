@@ -39,6 +39,8 @@ class EventType(StrEnum):
     spawn = "spawn"
     artifact = "artifact"
     summary = "summary"
+    error = "error"
+    token = "token"  # streaming assistant text delta (typewriter UI)
 
 
 class Session(BaseModel):
@@ -99,11 +101,52 @@ class RunResult(BaseModel):
     status: str = "done"  # done | failed | partial
     summary: str = ""
     metrics: dict = Field(default_factory=dict)
+    idea_id: str | None = None
+    validated: bool = False
+    validation_reasoning: str = ""
+    # Contract violations found at ingress (see result_contract_violations). A
+    # success-claiming result that trips the contract is recorded but downgraded to
+    # "partial" with the reasons here, so the main agent never synthesizes on a finding
+    # that fails its own success bar.
+    contract_violations: list[str] = Field(default_factory=list)
     # Future-git seam: a sub-agent may report the diff it ran (unified patch) against a
     # base ref, so the main agent can later diff/compose interventions. Unused for now.
     patch: str | None = None
     base_ref: str | None = None
     created_at: str = Field(default_factory=_now)
+
+
+def result_contract_violations(
+    *, target_metric: str | None, status: str, validated: bool, metrics: dict
+) -> list[str]:
+    """The hard contract a sub-agent's RunResult must satisfy to count as a usable
+    finding. Pure + stdlib-shaped on purpose: the same rules are mirrored in the
+    sub-agent's stdlib Stop hook (which has no infra/ import), exactly as the dispatch
+    path duplicates ResearchPlan across agent/ and infra/.
+
+    Returns human-readable violation strings (empty == clean). Only success-claiming
+    results are checked — a 'failed'/'partial' result is allowed to be thin, because an
+    honest negative finding is valuable and shouldn't be forced to invent numbers.
+
+    Scope is deliberately STRUCTURAL (is the result usable?), not statistical. Seed
+    count is intentionally NOT checked here: the prebaked trainer (scripts/train_ppo.py)
+    is single-seed by design, and seed-rigor is a separate research-quality concern
+    (idea 8) that must not silently downgrade a real, comparable finding.
+    """
+    claims_success = (status or "").lower() == "done" or validated
+    if not claims_success or not isinstance(metrics, dict):
+        return []
+    v: list[str] = []
+    if target_metric and target_metric not in metrics:
+        v.append(f"target_metric {target_metric!r} absent from metrics")
+    if validated:
+        has_baseline = (
+            (target_metric and f"{target_metric}_baseline" in metrics)
+            or "delta_vs_baseline" in metrics
+        )
+        if not has_baseline:
+            v.append("validated:true but no baseline comparison in metrics")
+    return v
 
 
 class ArtifactRef(BaseModel):

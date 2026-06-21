@@ -34,6 +34,7 @@ from infra.schemas import (
     Message,
     RoundRecord,
     RunResult,
+    result_contract_violations,
 )
 
 router = APIRouter(prefix="/internal", tags=["internal"])
@@ -154,6 +155,9 @@ class ResultIn(BaseModel):
     status: str = "done"  # done | failed | partial
     summary: str = ""
     metrics: dict = Field(default_factory=dict)
+    idea_id: str | None = None
+    validated: bool = False
+    validation_reasoning: str = ""
     artifacts: list[ArtifactIn] = Field(default_factory=list)
     patch: str | None = None       # future-git seam
     base_ref: str | None = None
@@ -261,16 +265,34 @@ async def post_result(r: ResultIn, caller: Caller = Depends(require_caller)) -> 
     status_l = (r.status or "done").lower()
     if status_l not in ("done", "failed", "partial"):
         status_l = "done"
-    await store.write_run(RunResult(job_id=r.job_id, status=status_l, summary=r.summary,
-                                    metrics=r.metrics, patch=r.patch, base_ref=r.base_ref))
+
+    # Hard contract (idea 1): a result claiming success must actually carry the plan's
+    # target_metric (and, if it claims validated, a baseline + >=2 seeds). We never
+    # reject — losing a result is worse than recording a flawed one — but a success
+    # claim that trips the contract is downgraded to "partial" with the reasons attached,
+    # so the main agent never ranks/synthesizes a finding that fails its own success bar.
+    target_metric = ((job.params or {}).get("plan") or {}).get("target_metric")
+    violations = result_contract_violations(
+        target_metric=target_metric, status=status_l, validated=r.validated,
+        metrics=r.metrics,
+    )
+    validated = r.validated
+    if violations and status_l == "done":
+        status_l = "partial"
+        validated = False
+
+    await store.write_run(RunResult(
+        job_id=r.job_id, status=status_l, summary=r.summary, metrics=r.metrics,
+        idea_id=r.idea_id, validated=validated, validation_reasoning=r.validation_reasoning,
+        contract_violations=violations, patch=r.patch, base_ref=r.base_ref))
     await store.set_job_status(
         r.job_id, JobStatus.failed if status_l == "failed" else JobStatus.done)
     await store.emit_event(EventEnvelope(
         session_id=r.session_id, job_id=r.job_id, parent_job_id=job.parent_job_id,
         depth=job.depth, type=EventType.summary,
         payload={"summary": r.summary[:240], "metrics": r.metrics,
-                 "reported_status": status_l}))
-    return {"recorded": True}
+                 "reported_status": status_l, "contract_violations": violations}))
+    return {"recorded": True, "contract_violations": violations}
 
 
 # ---- autonomous loop: agent reports a completed round ------------------

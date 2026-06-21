@@ -503,6 +503,18 @@ async def enqueue_dispatch(child_job_id: str) -> str:
     return await r.xadd(DISPATCH_QUEUE, {"job_id": child_job_id})
 
 
+# ---- chat inbox (user follow-up turns awaiting an agent reply) ----------
+
+CHAT_INBOX = "chat:inbox"
+
+
+async def enqueue_chat(session_id: str, content: str) -> str:
+    """A user follow-up turn for the conversational agent (or local-sim) to answer."""
+    return await get_redis().xadd(
+        CHAT_INBOX, {"session_id": session_id, "content": content}
+    )
+
+
 # ---- generic stream read / ack -----------------------------------------
 
 async def read_stream(
@@ -598,6 +610,23 @@ async def list_artifacts_for(job_id: str) -> list[ArtifactRef]:
         if doc:
             out.append(ArtifactRef.model_validate(doc))
     return out
+
+
+# ---- session listing (sidebar chat history) ----------------------------
+
+async def list_user_sessions(user_id: str, limit: int = 100) -> list[Session]:
+    """All sessions owned by a user, newest first. Scans the bare session:* keys
+    (skipping session:{sid}:events/budget/...). Fine at demo scale."""
+    r = get_redis()
+    out: list[Session] = []
+    async for k in r.scan_iter("session:*", count=200):
+        if k.count(":") != 1:  # skip session:{sid}:events / :budget / :transcript / ...
+            continue
+        doc = await r.json().get(k)
+        if doc and doc.get("user_id") == user_id:
+            out.append(Session.model_validate(doc))
+    out.sort(key=lambda s: s.created_at, reverse=True)
+    return out[:limit]
 
 
 # ---- full session read (chat resume endpoint) --------------------------

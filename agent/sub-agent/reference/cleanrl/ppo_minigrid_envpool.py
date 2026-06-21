@@ -1,10 +1,12 @@
 """Reference: PPO on MiniGrid via envpool (CPU, single-file).
 
-The MiniGrid+envpool bridge that `ppo.py` (discrete, but gym SyncVectorEnv) and
-`ppo_atari_envpool.py` (envpool, but Atari CNN) don't give you directly. Read and
-ADAPT it for your assigned idea — do not edit this original.
+BACKGROUND READING ONLY. Sub-agents do not author or adapt training code — they run
+the prebaked `scripts/train_ppo.py` with knob overrides (see CLAUDE.md). This file is
+the clearest single-file read for how MiniGrid+envpool training works: the bridge
+that `ppo.py` (discrete, but gym SyncVectorEnv) and `ppo_atari_envpool.py` (envpool,
+but Atari CNN) don't show directly.
 
-What it handles that the other references don't:
+What it shows that the other references don't:
   * envpool MiniGrid dict obs: {"direction": (N,), "image": (N,7,7,3) uint8,
     "mission": ...}. We encode image (flattened, scaled) + direction → a small MLP.
   * gymnasium 5-tuple step + envpool auto-reset, with episode-return tracking
