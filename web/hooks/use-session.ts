@@ -8,9 +8,12 @@ import type { ConnPhase, SessionState } from "@/lib/types";
 
 /**
  * Subscribe to a session's live event stream and fold it into view state.
- * Pass `null` for no active session.
+ * Pass `null` for no active session; `getToken` supplies the API auth token.
  */
-export function useSession(sessionId: string | null, token?: string) {
+export function useSession(
+  sessionId: string | null,
+  getToken?: () => Promise<string | undefined>
+) {
   const [state, setState] = useState<SessionState>(() => emptyState(sessionId));
   const [phase, setPhase] = useState<ConnPhase>("idle");
 
@@ -25,16 +28,20 @@ export function useSession(sessionId: string | null, token?: string) {
     setPhase("connecting");
 
     // Grab the goal quickly; the stream (replayed from the start) rebuilds the rest.
-    fetchFullSession(sessionId, token)
-      .then((full) => {
+    (async () => {
+      const token = getToken ? await getToken() : undefined;
+      try {
+        const full = await fetchFullSession(sessionId, token);
         if (!cancelled && full.session) {
           setState((s) => ({ ...s, goal: full.session!.goal }));
         }
-      })
-      .catch(() => {});
+      } catch {
+        /* ignore */
+      }
+    })();
 
     const handle = streamSession(sessionId, {
-      token,
+      getToken,
       onEvent: (env) => {
         if (!cancelled) setState((s) => applyEvent(s, env));
       },
@@ -47,7 +54,10 @@ export function useSession(sessionId: string | null, token?: string) {
       cancelled = true;
       handle.close();
     };
-  }, [sessionId, token]);
+    // getToken identity may change per render; we intentionally only re-subscribe
+    // when the session id changes (token is fetched fresh per connect).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
 
   return { state, phase };
 }

@@ -6,7 +6,10 @@ import { listSessions } from "@/lib/api";
 import type { WireSession } from "@/lib/types";
 
 /** The user's session list (sidebar chat history), with a manual refresh. */
-export function useSessions(userId: string | null, token?: string) {
+export function useSessions(
+  userId: string | null,
+  getToken?: () => Promise<string | undefined>
+) {
   const [sessions, setSessions] = useState<WireSession[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -14,13 +17,15 @@ export function useSessions(userId: string | null, token?: string) {
     if (!userId) return;
     setLoading(true);
     try {
+      const token = getToken ? await getToken() : undefined;
       setSessions(await listSessions(userId, token));
     } catch {
       /* keep last-known list on transient failure */
     } finally {
       setLoading(false);
     }
-  }, [userId, token]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
 
   useEffect(() => {
     refresh();

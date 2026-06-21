@@ -81,7 +81,7 @@ export interface SseHandle {
 export function streamSession(
   sid: string,
   opts: {
-    token?: string;
+    getToken?: () => Promise<string | undefined>;
     onEvent: (env: EventEnvelope) => void;
     onPhase?: (phase: ConnPhase) => void;
   }
@@ -96,8 +96,10 @@ export function streamSession(
       controller = new AbortController();
       try {
         opts.onPhase?.(lastId ? "reconnecting" : "connecting");
+        // Fresh token per (re)connect so long-lived streams survive expiry.
+        const token = opts.getToken ? await opts.getToken() : undefined;
         const headers: Record<string, string> = {};
-        if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
+        if (token) headers.Authorization = `Bearer ${token}`;
         if (lastId) headers["Last-Event-ID"] = lastId;
         const res = await fetch(`${API_BASE}/sessions/${sid}/stream`, {
           headers,

@@ -222,3 +222,48 @@ async def local_sim_loop() -> None:
         except Exception as e:  # noqa: BLE001
             print(f"[local_sim] {e!r}")
             await asyncio.sleep(1.0)
+
+
+# ---- conversational follow-ups -----------------------------------------
+
+async def respond_to_message(sid: str, content: str) -> None:
+    """Answer a user follow-up, grounded in the run's best result. (Production
+    routes this to the conversational agent + AMS memory; this is the dev stand-in.)"""
+    await asyncio.sleep(0.8)  # brief "thinking"
+    root = await store.get_root_job(sid)
+    best: float | None = None
+    for c in await store.child_statuses(root) if root else []:
+        r = (c.get("metrics") or {}).get("final_reward")
+        if isinstance(r, (int, float)) and (best is None or r > best):
+            best = float(r)
+    snippet = content[:80]
+    if best is not None:
+        reply = (
+            f"On “{snippet}” — the strongest direction is at reward {best:.2f}. "
+            "I'd scale that to the full run and keep the runner-up as an ablation. "
+            "Say the word and I'll launch a focused 2M-step run."
+        )
+    else:
+        reply = (
+            f"On “{snippet}” — I can spin up a focused sub-agent to dig into that. "
+            "Want me to launch one?"
+        )
+    await _msg(sid, root or "", "assistant", reply)
+
+
+async def chat_inbox_loop() -> None:
+    """Tail the chat inbox and answer user follow-ups."""
+    while True:
+        try:
+            for entry_id, fields in await store.read_stream(
+                store.CHAT_INBOX, "0", 50, 2000
+            ):
+                await store.delete_stream_entry(store.CHAT_INBOX, entry_id)
+                sid = fields.get("session_id")
+                if sid:
+                    asyncio.create_task(
+                        respond_to_message(sid, fields.get("content", ""))
+                    )
+        except Exception as e:  # noqa: BLE001
+            print(f"[local_sim chat] {e!r}")
+            await asyncio.sleep(1.0)

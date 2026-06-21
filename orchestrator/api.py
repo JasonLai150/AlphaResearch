@@ -12,7 +12,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Header, Request
+from fastapi import Depends, FastAPI, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.staticfiles import StaticFiles
@@ -21,7 +21,8 @@ from sse_starlette.sse import EventSourceResponse
 
 from infra import store
 from infra.config import settings
-from infra.schemas import Job, JobKind, JobStatus
+from infra.schemas import EventEnvelope, EventType, Job, JobKind, JobStatus, Message
+from orchestrator.auth import verified_user_id
 from runner.internal_api import router as internal_router
 
 
@@ -38,9 +39,11 @@ async def lifespan(app: FastAPI):
         from runner.main import start_runner_tasks
         tasks = start_runner_tasks()
     if settings.local_sim:
-        # Local dev: drive realistic runs into Redis instead of Cloud Run/Modal.
-        from runner.local_sim import local_sim_loop
+        # Local dev: drive realistic runs + chat replies into Redis instead of
+        # Cloud Run/Modal.
+        from runner.local_sim import chat_inbox_loop, local_sim_loop
         tasks.append(asyncio.create_task(local_sim_loop()))
+        tasks.append(asyncio.create_task(chat_inbox_loop()))
     try:
         yield
     finally:
@@ -89,10 +92,13 @@ class CreateSession(BaseModel):
 
 
 @app.post("/sessions")
-async def create_session(body: CreateSession) -> dict:
+async def create_session(
+    body: CreateSession, uid: str | None = Depends(verified_user_id)
+) -> dict:
+    user_id = uid or body.user_id or "demo"  # Clerk sub wins when configured
     sid = store.new_id("s")
     root = store.new_id("j")
-    await store.create_session(sid, body.user_id, body.goal, body.budget or settings.default_budget)
+    await store.create_session(sid, user_id, body.goal, body.budget or settings.default_budget)
     await store.create_job(
         Job(id=root, session_id=sid, depth=0, kind=JobKind.agent,
             params={"goal": body.goal}, status=JobStatus.queued, backend="cloud_run_job")
@@ -105,25 +111,63 @@ async def create_session(body: CreateSession) -> dict:
 
 
 @app.get("/sessions")
-async def list_sessions(user_id: str) -> list[dict]:
+async def list_sessions(
+    user_id: str | None = None, uid: str | None = Depends(verified_user_id)
+) -> list[dict]:
     """Chat history for the sidebar — the user's sessions, newest first."""
-    return [s.model_dump() for s in await store.list_user_sessions(user_id)]
+    target = uid or user_id or "demo"
+    return [s.model_dump() for s in await store.list_user_sessions(target)]
 
 
 @app.get("/sessions/{sid}")
-async def get_session(sid: str) -> dict:
+async def get_session(
+    sid: str, _uid: str | None = Depends(verified_user_id)
+) -> dict:
     return await store.read_state(sid)
 
 
 @app.get("/sessions/{sid}/full")
-async def full_session(sid: str) -> dict:
+async def full_session(
+    sid: str, _uid: str | None = Depends(verified_user_id)
+) -> dict:
     """Everything the chat UI needs to resume: session, job tree, runs, transcript,
     artifacts."""
     return await store.read_full_session(sid)
 
 
+class MessageIn(BaseModel):
+    content: str
+
+
+@app.post("/sessions/{sid}/messages")
+async def post_message(
+    sid: str, body: MessageIn, _uid: str | None = Depends(verified_user_id)
+) -> dict:
+    """A user follow-up turn (multi-turn chat). Persist it, stream it back as a log
+    event, and enqueue it for the conversational agent (local-sim answers in dev)."""
+    content = body.content.strip()
+    if not content:
+        return {"queued": False}
+    await store.append_message(
+        Message(session_id=sid, job_id="", role="user", content=content)
+    )
+    await store.emit_event(
+        EventEnvelope(
+            session_id=sid, job_id="", type=EventType.log,
+            payload={"role": "user", "content": content},
+        )
+    )
+    await store.enqueue_chat(sid, content)
+    return {"queued": True}
+
+
 @app.get("/sessions/{sid}/stream")
-async def stream(sid: str, request: Request, last_event_id: str | None = Header(default=None)):
+async def stream(
+    sid: str,
+    request: Request,
+    last_event_id: str | None = Header(default=None),
+    _uid: str | None = Depends(verified_user_id),
+):
     # On first connect (no Last-Event-ID) replay from the start so the UI never
     # misses events; reconnects pass a real id and resume exactly after it.
     start = last_event_id or "0"

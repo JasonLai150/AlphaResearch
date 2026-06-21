@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Sparkles } from "lucide-react";
 
+import { useAppAuth } from "@/components/auth/app-auth";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ChatComposer } from "@/components/chat-composer";
 import { ChatTranscript } from "@/components/chat-transcript";
@@ -20,16 +21,14 @@ import {
   subagentsOf,
   treeOf,
 } from "@/lib/session-reducer";
-import { currentUser, repoContext } from "@/lib/mock-data";
-
-// Until Clerk lands, the user id is a fixed string (Task 6/7 derive it from auth).
-const USER_ID = "demo";
+import { repoContext } from "@/lib/mock-data";
 
 export default function Page() {
+  const { userId, getToken } = useAppAuth();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const { sessions, refresh } = useSessions(USER_ID);
-  const { state, phase } = useSession(activeId);
+  const { sessions, refresh } = useSessions(userId, getToken);
+  const { state, phase } = useSession(activeId, getToken);
 
   // Restore the active session from the URL (?s=) on first load.
   useEffect(() => {
@@ -49,12 +48,13 @@ export default function Page() {
     setBusy(true);
     try {
       if (!activeId) {
-        const { session_id } = await createSession({ userId: USER_ID, goal: text });
+        const token = await getToken();
+        const { session_id } = await createSession({ userId, goal: text }, token);
         select(session_id);
         // Give the session a moment to register, then refresh the sidebar.
         setTimeout(refresh, 400);
       } else {
-        await sendMessage(activeId, text);
+        await sendMessage(activeId, text, await getToken());
       }
     } catch (e) {
       console.error("submit failed", e);
@@ -79,7 +79,6 @@ export default function Page() {
             activeId={activeId}
             onSelect={select}
             onNew={() => select(null)}
-            user={currentUser}
           />
         </div>
 

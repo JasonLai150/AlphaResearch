@@ -419,6 +419,18 @@ async def enqueue_dispatch(child_job_id: str) -> str:
     return await r.xadd(DISPATCH_QUEUE, {"job_id": child_job_id})
 
 
+# ---- chat inbox (user follow-up turns awaiting an agent reply) ----------
+
+CHAT_INBOX = "chat:inbox"
+
+
+async def enqueue_chat(session_id: str, content: str) -> str:
+    """A user follow-up turn for the conversational agent (or local-sim) to answer."""
+    return await get_redis().xadd(
+        CHAT_INBOX, {"session_id": session_id, "content": content}
+    )
+
+
 # ---- generic stream read / ack -----------------------------------------
 
 async def read_stream(

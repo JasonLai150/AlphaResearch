@@ -128,5 +128,17 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("ALPHA_LOCAL_SIM"),
     )
 
+    # ---- Auth (optional Clerk verification on the public API) ----------------
+    # When clerk_jwks_url is set, public endpoints require a verified Clerk JWT
+    # and derive user_id from its `sub`. Unset = open dev mode (caller-supplied id).
+    clerk_jwks_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ALPHA_CLERK_JWKS_URL", "CLERK_JWKS_URL"),
+    )
+    clerk_issuer: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ALPHA_CLERK_ISSUER", "CLERK_ISSUER"),
+    )
+
 
 settings = Settings()

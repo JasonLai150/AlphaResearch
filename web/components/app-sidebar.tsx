@@ -12,6 +12,9 @@ import {
   Sparkles,
 } from "lucide-react";
 
+import { UserButton } from "@clerk/nextjs";
+
+import { useAppAuth } from "@/components/auth/app-auth";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,7 +22,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Eyebrow } from "@/components/eyebrow";
 import { cn } from "@/lib/utils";
-import type { CurrentUser, WireSession } from "@/lib/types";
+import type { WireSession } from "@/lib/types";
 
 const NAV = [
   { key: "overview", label: "Overview", icon: LayoutGrid },
@@ -45,14 +48,13 @@ export function AppSidebar({
   activeId,
   onSelect,
   onNew,
-  user,
 }: {
   sessions: WireSession[];
   activeId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
-  user: CurrentUser;
 }) {
+  const { user, clerk } = useAppAuth();
   const [activeNav, setActiveNav] = useState<string>("overview");
   const [filter, setFilter] = useState("");
 
@@ -162,31 +164,48 @@ export function AppSidebar({
           <Settings className="size-4" aria-hidden />
           Settings
         </button>
-        <button
-          type="button"
-          className={cn(
-            "flex items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-canvas-soft",
-            focusRing
-          )}
-        >
-          <Avatar className="size-7">
-            <AvatarFallback className="text-[11px]">
-              {user.initials}
-            </AvatarFallback>
-          </Avatar>
-          <div className="flex min-w-0 flex-col items-start gap-0.5 leading-tight">
-            <span className="line-clamp-1 max-w-[120px] text-[13px]">
-              {user.handle}
-            </span>
-            <Badge
-              variant="secondary"
-              className="px-1.5 py-0 text-[10px] uppercase tracking-wider"
-            >
-              {user.role}
-            </Badge>
+        {clerk ? (
+          <div className="flex items-center gap-2.5 rounded-lg px-2 py-1.5">
+            <UserButton />
+            <div className="flex min-w-0 flex-col items-start gap-0.5 leading-tight">
+              <span className="line-clamp-1 max-w-[120px] text-[13px]">
+                {user.handle}
+              </span>
+              <Badge
+                variant="secondary"
+                className="px-1.5 py-0 text-[10px] uppercase tracking-wider"
+              >
+                {user.role}
+              </Badge>
+            </div>
           </div>
-          <ChevronsUpDown className="ml-auto size-4 text-mute" aria-hidden />
-        </button>
+        ) : (
+          <button
+            type="button"
+            className={cn(
+              "flex items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-canvas-soft",
+              focusRing
+            )}
+          >
+            <Avatar className="size-7">
+              <AvatarFallback className="text-[11px]">
+                {user.initials}
+              </AvatarFallback>
+            </Avatar>
+            <div className="flex min-w-0 flex-col items-start gap-0.5 leading-tight">
+              <span className="line-clamp-1 max-w-[120px] text-[13px]">
+                {user.handle}
+              </span>
+              <Badge
+                variant="secondary"
+                className="px-1.5 py-0 text-[10px] uppercase tracking-wider"
+              >
+                {user.role}
+              </Badge>
+            </div>
+            <ChevronsUpDown className="ml-auto size-4 text-mute" aria-hidden />
+          </button>
+        )}
       </div>
     </aside>
   );
