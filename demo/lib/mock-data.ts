@@ -25,7 +25,7 @@ export const chats: ChatSummary[] = [
   { id: "c2", title: "Reward shaping ablations", updatedAt: "1h ago" },
   { id: "c3", title: "Entropy coefficient sweep", updatedAt: "3h ago" },
   { id: "c4", title: "Curiosity-driven exploration (ICM)", updatedAt: "yesterday" },
-  { id: "c5", title: "SAC vs PPO baseline", updatedAt: "2d ago" },
+  { id: "c5", title: "SAC vs PPO baseline", updatedAt: "8h ago" },
   { id: "c6", title: "Frame-stacking + LSTM policy", updatedAt: "4d ago" },
 ];
 

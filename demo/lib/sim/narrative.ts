@@ -51,6 +51,8 @@ export function leadFinal(scn: Scenario): string {
 
 /** A finished sub-agent's one-paragraph summary (rides a `summary` event). */
 export function strategySummary(scn: Scenario, spec: StrategySpec, i: number): string {
+  // Live mode: prefer the model-written summary so /view matches the card.
+  if (spec.liveSummary) return spec.liveSummary;
   const final = spec.points[spec.points.length - 1].reward;
   if (spec.outcome === "fail")
     return `${label(i)} (${spec.kind}): plateaued at ${fmt(final)} ${scn.metricName}; the change didn't separate from the ${fmt(

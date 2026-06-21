@@ -18,12 +18,13 @@ export class ApiError extends Error {
 
 /**
  * Resolve an artifact URL (#10):
- *  - http/https → returned unchanged.
+ *  - http/https / data: → returned unchanged.
  *  - gs://bucket/key → https://storage.googleapis.com/bucket/key.
  *  - relative /path → `${API_BASE}${path}` (served by the API).
  */
 export function artifactUrl(url: string): string {
   if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  if (url.startsWith("data:")) return url;
   if (url.startsWith("gs://")) {
     return `https://storage.googleapis.com/${url.slice("gs://".length)}`;
   }
