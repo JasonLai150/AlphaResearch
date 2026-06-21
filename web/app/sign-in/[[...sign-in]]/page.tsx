@@ -14,7 +14,7 @@ export default function SignInPage() {
         </p>
       </header>
       {CLERK_ENABLED ? (
-        <SignIn fallbackRedirectUrl="/" signUpUrl="/sign-up" />
+        <SignIn fallbackRedirectUrl="/app" signUpUrl="/sign-up" />
       ) : (
         <p className="text-sm text-mute">
           Authentication is disabled in this environment.
