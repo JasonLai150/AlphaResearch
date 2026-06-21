@@ -127,6 +127,11 @@ def result_contract_violations(
     Returns human-readable violation strings (empty == clean). Only success-claiming
     results are checked — a 'failed'/'partial' result is allowed to be thin, because an
     honest negative finding is valuable and shouldn't be forced to invent numbers.
+
+    Scope is deliberately STRUCTURAL (is the result usable?), not statistical. Seed
+    count is intentionally NOT checked here: the prebaked trainer (scripts/train_ppo.py)
+    is single-seed by design, and seed-rigor is a separate research-quality concern
+    (idea 8) that must not silently downgrade a real, comparable finding.
     """
     claims_success = (status or "").lower() == "done" or validated
     if not claims_success or not isinstance(metrics, dict):
@@ -141,9 +146,6 @@ def result_contract_violations(
         )
         if not has_baseline:
             v.append("validated:true but no baseline comparison in metrics")
-        n_seeds = metrics.get("n_seeds")
-        if not isinstance(n_seeds, (int, float)) or isinstance(n_seeds, bool) or n_seeds < 2:
-            v.append("validated:true but n_seeds < 2 (single-seed result is not validated)")
     return v
 
 

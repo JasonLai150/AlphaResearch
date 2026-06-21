@@ -278,21 +278,37 @@ async def test_result_done_missing_target_metric_downgraded_to_partial(client, f
     assert (await store.get_job("j_c")).status == JobStatus.done
 
 
-async def test_result_validated_without_baseline_or_seeds_downgraded(client, fake_redis):
-    """validated:true demands a baseline comparison AND >=2 seeds; a single-seed claim
-    with no baseline is downgraded and de-validated."""
+async def test_result_validated_without_baseline_downgraded(client, fake_redis):
+    """validated:true demands a baseline comparison; a claim with the target metric but
+    no baseline is downgraded and de-validated."""
     await _seed_child_with_plan(target_metric="score")
     tok = await store.mint_agent_token("s_a")
     r = await client.post("/internal/result",
                           json={"job_id": "j_c", "session_id": "s_a", "status": "done",
-                                "summary": "one lucky seed", "validated": True,
-                                "metrics": {"score": 0.9, "n_seeds": 1}},
+                                "summary": "no baseline run", "validated": True,
+                                "metrics": {"score": 0.9}},
                           headers=_bearer(tok))
     assert r.status_code == 202
     run = await store.get_run("j_c")
     assert run.status == "partial" and run.validated is False
     assert any("baseline" in v for v in run.contract_violations)
-    assert any("n_seeds" in v for v in run.contract_violations)
+
+
+async def test_result_single_seed_trainer_result_passes(client, fake_redis):
+    """The prebaked trainer is single-seed by design and writes validated:true with a
+    baseline + delta. The structural contract must accept it unchanged (no downgrade) —
+    seed-rigor is a separate concern, not a structural violation."""
+    await _seed_child_with_plan(target_metric="mean_return")
+    tok = await store.mint_agent_token("s_a")
+    r = await client.post("/internal/result",
+                          json={"job_id": "j_c", "session_id": "s_a", "status": "done",
+                                "summary": "trainer ran baseline+intervention", "validated": True,
+                                "metrics": {"mean_return": 0.7, "mean_return_baseline": 0.5,
+                                            "delta_vs_baseline": 0.2, "n_seeds": 1}},
+                          headers=_bearer(tok))
+    assert r.status_code == 202 and r.json()["contract_violations"] == []
+    run = await store.get_run("j_c")
+    assert run.status == "done" and run.validated is True
 
 
 async def test_result_failed_not_contract_checked(client, fake_redis):
