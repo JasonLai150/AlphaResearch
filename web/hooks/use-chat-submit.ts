@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { createSession, sendMessage, ApiError } from "@/lib/api";
+import { getDefaultBudget } from "@/lib/settings-store";
 import type { TranscriptItem } from "@/lib/types";
 
 /** Clear pending if no assistant reply lands within this window (#3). */
@@ -77,8 +78,10 @@ export function useChatSubmit({
       try {
         if (!activeId) {
           const token = await getToken();
+          // Apply the user's saved default budget (Settings) if any; undefined
+          // is omitted from the request so the backend default still applies.
           const { session_id } = await createSession(
-            { userId: userId ?? "", goal: text },
+            { userId: userId ?? "", goal: text, budget: getDefaultBudget() },
             token
           );
           onCreate(session_id);
