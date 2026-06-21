@@ -34,8 +34,10 @@ export interface JobNode {
   logs: string[];
 }
 
-export const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+// DEMO build: the "backend" is a set of in-app Next.js route handlers under
+// /api/mock that emit the exact same EventEnvelope SSE protocol. Pointing
+// API_BASE here lets the real api.ts / streamSession / hooks run verbatim.
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "/api/mock";
 
 // ─── Dashboard view models ──────────────────────────────────────────────────
 // Presentation-layer types for the Overview dashboard. These stay decoupled
