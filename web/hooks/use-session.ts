@@ -61,6 +61,17 @@ export function useSession(
           goal: full.session!.goal,
           startedAt: full.session!.created_at,
           mode: full.session!.mode ?? s.mode,
+          // Seed loop state on resume so round/status render before the stream
+          // replays the round_started/loop_stopped events.
+          loop: full.loop
+            ? {
+                round: full.loop.rounds.length || 1,
+                maxRounds: full.loop.max_rounds,
+                goalMetric: full.loop.goal_metric,
+                status: full.loop.status,
+                reason: full.loop.stop_reason || undefined,
+              }
+            : s.loop,
         }));
       } catch (e) {
         if (cancelled) return;

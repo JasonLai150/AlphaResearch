@@ -345,6 +345,75 @@ describe("token events → coalesced typewriter transcript item", () => {
   });
 });
 
+// ─── autonomous loop: round_started / loop_stopped → state.loop ──────────────
+
+describe("autonomous loop lifecycle", () => {
+  const stream: EventEnvelope[] = [
+    env({
+      type: "status",
+      job_id: "r1",
+      payload: { phase: "round_started", round_index: 1, max_rounds: 3, goal_metric: 0.9 },
+    }),
+    env({ type: "metric", job_id: "r1", payload: { step: 10, reward: 0.6 } }),
+    env({
+      type: "summary",
+      job_id: "r1",
+      payload: { summary: "round 1", metrics: { best_reward: 0.6 } },
+    }),
+    env({
+      type: "status",
+      job_id: "r2",
+      payload: { phase: "round_started", round_index: 2, max_rounds: 3, goal_metric: 0.9 },
+    }),
+    env({
+      type: "status",
+      job_id: "r2",
+      payload: {
+        phase: "loop_stopped",
+        status: "completed",
+        reason: "reached max_rounds=3",
+        round_index: 3,
+        max_rounds: 3,
+        goal_metric: 0.9,
+      },
+    }),
+  ];
+
+  it("tracks round progress and terminal status", () => {
+    const state = reduce(stream);
+    expect(state.loop).toEqual({
+      round: 3,
+      maxRounds: 3,
+      goalMetric: 0.9,
+      status: "completed",
+      reason: "reached max_rounds=3",
+    });
+  });
+
+  it("shows round 1 / 3 while running", () => {
+    const state = reduce(stream.slice(0, 3));
+    expect(state.loop).toMatchObject({ round: 1, maxRounds: 3, status: "running" });
+  });
+
+  it("a round_started event does not create a phantom job node", () => {
+    const state = reduce([stream[0]]);
+    expect(state.order).toEqual([]);
+    expect(state.rootId).toBeNull();
+  });
+
+  it("is idempotent under full replay", () => {
+    expect(reduce(stream)).toEqual(reduce(stream));
+  });
+
+  it("oneshot sessions never populate loop", () => {
+    const state = reduce([
+      env({ type: "status", job_id: "root", payload: { status: "running" } }),
+      env({ type: "summary", job_id: "root", payload: { summary: "done" } }),
+    ]);
+    expect(state.loop).toBeUndefined();
+  });
+});
+
 // ─── (i) graphOf builds nodes + links from the job graph ─────────────────────
 
 describe("graphOf nodes and links", () => {

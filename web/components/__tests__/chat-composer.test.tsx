@@ -19,7 +19,8 @@ describe("ChatComposer", () => {
     await user.keyboard("{Enter}");
 
     expect(onSubmit).toHaveBeenCalledTimes(1);
-    expect(onSubmit).toHaveBeenCalledWith("hello world");
+    // Non-autonomous composer passes undefined autonomous-options.
+    expect(onSubmit).toHaveBeenCalledWith("hello world", undefined);
   });
 
   it("inserts a newline on Shift+Enter and does not submit", async () => {
@@ -63,7 +64,7 @@ describe("ChatComposer", () => {
     await user.type(textarea, "needs retry");
     await user.keyboard("{Enter}");
 
-    expect(onSubmit).toHaveBeenCalledWith("needs retry");
+    expect(onSubmit).toHaveBeenCalledWith("needs retry", undefined);
 
     // After the rejection settles, the text is restored...
     await waitFor(() => {

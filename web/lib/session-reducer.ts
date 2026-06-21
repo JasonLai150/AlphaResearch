@@ -4,6 +4,8 @@ import type {
   GraphLink,
   GraphNode,
   JobView,
+  LoopStatus,
+  LoopView,
   SessionState,
   Subagent,
   TranscriptItem,
@@ -149,6 +151,38 @@ export function applyEvent(prev: SessionState, env: EventEnvelope): SessionState
       role: "system",
       text: String(p.reason ?? p.message ?? "agent error"),
     });
+  }
+
+  // Autonomous loop lifecycle rides on `status` events carrying a `phase`
+  // (round_started / loop_stopped). Fold it into state.loop and return early so a
+  // round-boundary event never registers a phantom job node. Append-only fields +
+  // last-write-wins => idempotent under replay-from-0 and reconnect-resume.
+  if (
+    env.type === "status" &&
+    (p.phase === "round_started" || p.phase === "loop_stopped")
+  ) {
+    const prevLoop = prev.loop;
+    const loop: LoopView = {
+      round:
+        typeof p.round_index === "number" ? p.round_index : prevLoop?.round ?? 1,
+      maxRounds:
+        typeof p.max_rounds === "number"
+          ? p.max_rounds
+          : prevLoop?.maxRounds ?? 0,
+      goalMetric:
+        typeof p.goal_metric === "number"
+          ? p.goal_metric
+          : prevLoop?.goalMetric ?? null,
+      status:
+        p.phase === "loop_stopped"
+          ? ((p.status as LoopStatus) ?? "completed")
+          : "running",
+      reason:
+        p.phase === "loop_stopped"
+          ? (p.reason as string) ?? prevLoop?.reason
+          : prevLoop?.reason,
+    };
+    return { ...prev, loop };
   }
 
   // Backend / mode may arrive on spawn or status payloads (#27); capture them.

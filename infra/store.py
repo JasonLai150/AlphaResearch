@@ -651,6 +651,10 @@ async def read_full_session(sid: str) -> dict:
             tree[jid] = kids
         artifacts.extend(a.model_dump(mode="json") for a in await list_artifacts_for(jid))
     transcript = [m.model_dump(mode="json") for m in await read_transcript(sid)]
+    # Autonomous sessions carry a Loop record; oneshot sessions have none (null).
+    # The UI seeds its loop view from this so a reload shows round/status before the
+    # event stream replays.
+    loop = await get_loop(sid)
     return {
         "session": session_doc,
         "jobs": jobs,
@@ -658,6 +662,7 @@ async def read_full_session(sid: str) -> dict:
         "tree": tree,
         "transcript": transcript,
         "artifacts": artifacts,
+        "loop": loop.model_dump(mode="json") if loop else None,
     }
 
 
