@@ -7,8 +7,9 @@ your assigned idea — do not edit these originals.
 
 | File | Use it for |
 |------|-----------|
-| `ppo.py` | Discrete-action PPO (gym vector envs). Closest base for **MiniGrid** tasks (Discrete action space). |
-| `ppo_atari_envpool.py` | PPO wired to **envpool** (vectorized, the fast path). Copy its envpool `make()` / step loop when training on envpool envs. |
+| `ppo_minigrid_envpool.py` | **PPO on MiniGrid via envpool** — the dict-obs encode + episode-return bridge. **Start here for MiniGrid tasks.** |
+| `ppo.py` | Discrete-action PPO on gym `SyncVectorEnv` (steps envs one-at-a-time in Python — slow). Read for the PPO core; prefer the envpool version above for MiniGrid. |
+| `ppo_atari_envpool.py` | PPO wired to **envpool** with an Atari CNN. Read for the generic envpool `make()` / step pattern. |
 | `ppo_continuous_action.py` | Continuous-action PPO. Base for **MuJoCo** tasks (Ant, HalfCheetah, Hopper, Humanoid, Walker2d, ...). |
 
 ## Environments in this container

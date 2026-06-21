@@ -46,9 +46,11 @@ Your Bash sessions have a real RL stack baked in:
   `MiniGrid-Empty-*`, `BabyAI-*`), MuJoCo (`Ant-v4`, `HalfCheetah-v4`, ...), Atari,
   classic control. `envpool.make(plan.env_id, env_type="gymnasium", num_envs=N)`.
 - **torch (CPU-only)** — the learner. No CUDA; keep nets small.
-- **CleanRL PPO references** under `reference/cleanrl/` — copy the closest one
-  (`ppo.py` discrete/MiniGrid, `ppo_continuous_action.py` MuJoCo,
-  `ppo_atari_envpool.py` for the envpool wiring) and adapt it. Read its README.
+- **CleanRL PPO references** under `reference/cleanrl/` — copy the closest one and
+  adapt it. For **MiniGrid, start from `ppo_minigrid_envpool.py`** (the ready
+  envpool + dict-obs + episode-return bridge); `ppo_continuous_action.py` for MuJoCo;
+  `ppo.py` / `ppo_atari_envpool.py` are the generic PPO-core / envpool-wiring reads.
+  Read its README.
 - gymnasium, minigrid, numpy, matplotlib, tensorboard.
 
 ### Speed: use envpool with many parallel envs (this is CPU-bound)
