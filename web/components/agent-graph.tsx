@@ -103,7 +103,7 @@ export function AgentGraph({
         // Adjustment A: pass the event to onPointerUp and add onPointerCancel handler.
         onPointerUp={(e) => { onPointerUp(e); endNodeDrag(); }}
         onPointerCancel={(e) => { onPointerCancel(e); endNodeDrag(); }}
-        className="relative min-h-0 flex-1 touch-none overflow-hidden [background:radial-gradient(60%_60%_at_50%_40%,#12141a_0%,#0a0a0a_100%)]"
+        className="relative min-h-0 flex-1 touch-none overflow-hidden overscroll-contain [background:radial-gradient(60%_60%_at_50%_40%,#12141a_0%,#0a0a0a_100%)]"
       >
         <div
           className="absolute inset-0 origin-top-left"
