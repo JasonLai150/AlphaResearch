@@ -1,0 +1,64 @@
+# Build-context upload filter for `gcloud builds submit .` (scripts/deploy_cloudrun.sh).
+#
+# WHY THIS FILE EXISTS — without it, gcloud auto-generates a .gcloudignore from
+# .gitignore (it does `#!include:.gitignore`) and applies those patterns as PURE
+# excludes. Critically, gcloud does NOT honor git's tracked-file protection: even
+# though agent/*/.claude/** is committed, .gitignore's `.claude/` line makes gcloud
+# strip it from the uploaded context. The agent Dockerfiles then `COPY agent/<name>/`
+# into /workspace with NO .claude/ — so launch.py's `from _push import push` dies with
+# `ModuleNotFoundError: No module named '_push'`, and the claude CLI boots with no
+# settings.json -> zero hooks (no dispatch validation, no event streaming, no finalize).
+#
+# So we DELIBERATELY do NOT `#!include:.gitignore` here, and we do NOT list `.claude/`.
+# Per-image filtering still happens at the Docker layer (root .dockerignore +
+# deploy/<name>.Dockerfile.dockerignore). This file only keeps the UPLOAD lean and
+# keeps secrets out. Verify with: `gcloud meta list-files-for-upload .`
+
+# --- Git / Editor / OS ---
+.git/
+.gitignore
+.gitattributes
+.cursor/
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo
+
+# Local Claude Code tooling at the repo ROOT only — worktrees (full repo copies!),
+# plugin cache, session state. The leading `/` anchors this to the context root so it
+# does NOT touch agent/main-agent/.claude/ or agent/sub-agent/.claude/, which the
+# images need. Without the anchor we'd upload .claude/worktrees/** = many repo copies.
+/.claude/
+
+# --- Python build & cache ---
+**/__pycache__/
+**/*.py[cod]
+**/*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+
+# --- Web / Node (no image built here needs it) ---
+node_modules/
+web/
+
+# --- Secrets — NEVER upload (defense-in-depth with .dockerignore) ---
+.env
+.env.*
+!.env.example
+*-sa-key.json
+gcs-sa-key.json
+*.pem
+
+# --- Local data ---
+.artifacts/
+*.log
+wandb/
+
+# NOTE: intentionally NO `.claude/` line. The agent images require
+# agent/main-agent/.claude/ and agent/sub-agent/.claude/ (hooks + settings.json).
