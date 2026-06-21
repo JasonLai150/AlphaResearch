@@ -33,7 +33,19 @@ _redis: redis.Redis | None = None
 def get_redis() -> redis.Redis:
     global _redis
     if _redis is None:
-        _redis = redis.from_url(settings.redis_url, decode_responses=True)
+        # Generous, resilient connection settings: Redis Cloud connect latency is
+        # variable (~0.2-3s), which trips redis.asyncio's tight default connect
+        # timeout intermittently. Keepalive + retry_on_timeout keep the long-lived
+        # event-stream tailers and the worker consumer stable.
+        _redis = redis.from_url(
+            settings.redis_url,
+            decode_responses=True,
+            socket_connect_timeout=15,
+            socket_timeout=30,
+            socket_keepalive=True,
+            health_check_interval=30,
+            retry_on_timeout=True,
+        )
     return _redis
 
 
@@ -280,15 +292,35 @@ def _upload_local(session_id: str, job_id: str, name: str, data: bytes) -> str:
 
 
 def _upload_gcs(session_id: str, job_id: str, name: str, data: bytes, content_type: str) -> str:
+    import json
+
     from google.cloud import storage  # lazy: only needed when GCS configured
 
     if settings.storage_emulator_host:
         os.environ.setdefault("STORAGE_EMULATOR_HOST", settings.storage_emulator_host)
-    client = storage.Client()
+        client = storage.Client()
+    elif settings.google_credentials_b64:
+        # Modal: SA key injected as single-line base64 (no file on disk).
+        import base64
+
+        client = storage.Client.from_service_account_info(
+            json.loads(base64.b64decode(settings.google_credentials_b64))
+        )
+    elif settings.google_credentials_json:
+        client = storage.Client.from_service_account_info(
+            json.loads(settings.google_credentials_json)
+        )
+    elif settings.google_credentials_file:
+        # Local: explicit SA key file (.env isn't exported to os.environ for ADC).
+        client = storage.Client.from_service_account_json(settings.google_credentials_file)
+    else:
+        client = storage.Client()  # ADC fallback
+    path = f"{session_id}/{job_id}/{name}"
     bucket = client.bucket(settings.gcs_bucket)
-    blob = bucket.blob(f"{session_id}/{job_id}/{name}")
-    blob.upload_from_string(data, content_type=content_type)
-    return f"gs://{settings.gcs_bucket}/{session_id}/{job_id}/{name}"
+    bucket.blob(path).upload_from_string(data, content_type=content_type)
+    # Browser-loadable public URL (bucket is public-read for the demo). The local-disk
+    # fallback returns a relative /artifacts/... path; the web client handles both.
+    return f"https://storage.googleapis.com/{settings.gcs_bucket}/{path}"
 
 
 __all__ = [

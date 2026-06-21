@@ -119,7 +119,12 @@ export default function Home() {
             )}
             {j.summary && <div>{j.summary}</div>}
             {j.artifacts.map((a, i) => (
-              <img key={i} className="artifact" src={`${API_BASE}${a.url}`} alt={a.caption ?? ""} />
+              <img
+                key={i}
+                className="artifact"
+                src={a.url.startsWith("http") ? a.url : `${API_BASE}${a.url}`}
+                alt={a.caption ?? ""}
+              />
             ))}
             {j.logs.map((l, i) => (
               <div key={i} className="log">
