@@ -30,7 +30,7 @@ export function TreePanel({
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-6 p-4">
-          {tree ? (
+          {tree && onExpand ? (
             <button
               type="button"
               onClick={onExpand}
@@ -41,7 +41,11 @@ export function TreePanel({
             </button>
           ) : (
             <div className="flex min-h-[120px] items-center justify-center rounded-lg border border-hairline bg-canvas-card/40 px-3 py-4">
-              <span className="text-[12px] text-mute">No agents yet.</span>
+              {tree ? (
+                <AgentTree root={tree} />
+              ) : (
+                <span className="text-[12px] text-mute">No agents yet.</span>
+              )}
             </div>
           )}
 

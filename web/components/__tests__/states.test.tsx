@@ -143,6 +143,9 @@ describe("TreePanel states", () => {
 
     expect(screen.getByText("No agents yet.")).toBeInTheDocument();
     expect(screen.getByText("None dispatched yet.")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /expand agent graph/i })
+    ).not.toBeInTheDocument();
   });
 
   it("fires onExpand when the tree is clicked", () => {
