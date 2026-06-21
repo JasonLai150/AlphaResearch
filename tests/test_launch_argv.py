@@ -27,6 +27,31 @@ def test_build_argv_uses_streaming_print_mode():
     assert "--dangerously-skip-permissions" in argv
 
 
+def test_prompt_chat_mode_answers_conversationally_with_context():
+    ctx = {
+        "goal": "improve PPO sample efficiency",
+        "mode": "chat",
+        "message": "why did Y underperform?",
+        "conversation": [
+            {"role": "user", "content": "kick it off"},
+            {"role": "assistant", "content": "X wins at 0.81; Y plateaued at 0.64"},
+        ],
+    }
+    p = launch._prompt(ctx)
+    # The new user message + prior conversation context are present.
+    assert "why did Y underperform?" in p
+    assert "X wins at 0.81" in p
+    # It is a chat turn, NOT the full research workflow (no fan-out instruction).
+    assert "dispatch one sub-agent" not in p.lower()
+    assert "use the research skill" not in p.lower()
+
+
+def test_prompt_oneshot_mode_still_runs_the_research_workflow():
+    p = launch._prompt({"goal": "improve PPO", "mode": "oneshot"})
+    assert "research skill" in p.lower()
+    assert "dispatch one sub-agent" in p.lower()
+
+
 def test_main_forwards_exit_code_when_relay_raises(monkeypatch):
     # If relay blows up mid-stream, the launcher must still exit with claude's
     # return code (the Cloud Run Job success/failure signal), not a traceback.

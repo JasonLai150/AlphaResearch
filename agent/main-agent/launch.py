@@ -57,8 +57,30 @@ def _bootstrap(runner_url: str, token: str) -> dict:
     raise SystemExit(f"[launch] bootstrap failed after {_BOOTSTRAP_ATTEMPTS}: {last!r}")
 
 
+def _chat_prompt(goal: str, ctx: dict) -> str:
+    """A follow-up conversational turn: answer the user's new message grounded in the
+    session so far. NOT a fresh research run — don't replan or dispatch unless asked."""
+    convo = ctx.get("conversation") or []
+    history = "\n".join(
+        f"{m.get('role', '?')}: {(m.get('content') or '').strip()}" for m in convo
+    ) or "(no prior turns)"
+    message = (ctx.get("message") or "").strip()
+    return (
+        "You are the research director, continuing a conversation with the user about "
+        f"this session.\n\nSession goal:\n{goal}\n\n"
+        f"Conversation so far:\n{history}\n\n"
+        f"The user just said:\n{message}\n\n"
+        "Respond directly and concisely, grounded in this session's results and the "
+        "conversation above. This is a CHAT turn — do NOT start a new research plan or "
+        "dispatch sub-agents unless the user explicitly asks you to run more experiments. "
+        "Answer, then exit. Never block waiting for user input."
+    )
+
+
 def _prompt(ctx: dict) -> str:
     goal = (ctx.get("goal") or "").strip()
+    if ctx.get("mode") == "chat":
+        return _chat_prompt(goal, ctx)
     base = (
         "You are the research director for an autonomous RL research session.\n\n"
         f"The user's goal:\n{goal}\n\n"

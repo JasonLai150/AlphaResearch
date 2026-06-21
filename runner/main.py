@@ -19,5 +19,6 @@ def start_runner_tasks() -> list[asyncio.Task]:
         asyncio.create_task(loops.leadership_loop(runner_id)),
         asyncio.create_task(loops.session_loop()),
         asyncio.create_task(loops.dispatch_loop()),
+        asyncio.create_task(loops.chat_loop()),
         asyncio.create_task(loops.reconcile_loop()),
     ]
