@@ -16,6 +16,21 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+# ---- demo guardrails (small, fast, low-variance search space) ----------------
+# The prebaked trainer (agent/sub-agent/scripts/train_ppo.py) runs ONE tested PPO on a
+# fixed tiny env; an "idea" is a set of hyperparameter overrides. These caps keep every
+# run to seconds and bound the search space. The PreToolUse dispatch hook validates a
+# plan against this schema, so the main agent CANNOT dispatch out-of-bounds work.
+ALLOWED_ENVS = {"MiniGrid-Empty-5x5-v0"}
+MAX_BUDGET_STEPS = 50_000
+# Hyperparameter knobs train_ppo.py exposes (must match its TUNABLE). base_hparams +
+# idea interventions stay within these so the agent parameterizes, never authors code.
+TUNABLE_KNOBS = {
+    "learning_rate", "ent_coef", "num_steps", "gamma", "gae_lambda", "clip_coef",
+    "vf_coef", "max_grad_norm", "update_epochs", "num_minibatches", "hidden_size",
+    "norm_adv", "anneal_lr",
+}
+
 
 class DiversityTag(StrEnum):
     """Coarse buckets that force ideas to attack different parts of the system.
@@ -60,11 +75,11 @@ class ResearchPlan(BaseModel):
 
     id: str = Field(default_factory=lambda: f"plan_{uuid.uuid4().hex[:8]}")
     goal: str
-    env_id: str                                   # e.g. "MiniGrid-DoorKey-8x8"
+    env_id: str                                   # must be in ALLOWED_ENVS (demo guardrail)
     reward_fn_spec: str                           # FROZEN reward, described in prose
-    base_hparams: dict                            # FROZEN, must be non-empty
+    base_hparams: dict                            # FROZEN, non-empty, keys ⊆ TUNABLE_KNOBS
     target_metric: str                            # SINGLE scalar to optimize
-    budget_steps: int = Field(gt=0)               # per-sub-agent training budget
+    budget_steps: int = Field(gt=0, le=MAX_BUDGET_STEPS)  # per-sub-agent budget (capped)
     # Single source of truth for TIME (idea 3). The wall-clock a sub-agent may need to
     # burn budget_steps on a CPU learner. The main agent derives its wait_for_children
     # timeout from this (so it doesn't synthesize before slow children land), and it
@@ -86,11 +101,27 @@ class ResearchPlan(BaseModel):
             raise ValueError("must be non-empty")
         return v
 
+    @field_validator("env_id")
+    @classmethod
+    def _env_allowed(cls, v: str) -> str:
+        v = v.strip()
+        if v not in ALLOWED_ENVS:
+            raise ValueError(
+                f"env_id must be one of {sorted(ALLOWED_ENVS)} (demo guardrail); got {v!r}"
+            )
+        return v
+
     @field_validator("base_hparams")
     @classmethod
-    def _base_hparams_nonempty(cls, v: dict) -> dict:
+    def _base_hparams_valid(cls, v: dict) -> dict:
         if not v:
             raise ValueError("base_hparams must be non-empty (locks the comparison)")
+        unknown = set(v) - TUNABLE_KNOBS
+        if unknown:
+            raise ValueError(
+                f"base_hparams has unsupported knobs {sorted(unknown)}; the prebaked "
+                f"trainer only accepts {sorted(TUNABLE_KNOBS)}"
+            )
         return v
 
     @model_validator(mode="after")
@@ -194,4 +225,5 @@ class GraphSpec(BaseModel):
 __all__ = [
     "DiversityTag", "ResearchIdea", "ResearchPlan",
     "GraphKind", "GraphSeries", "GraphSpec",
+    "ALLOWED_ENVS", "MAX_BUDGET_STEPS", "TUNABLE_KNOBS",
 ]

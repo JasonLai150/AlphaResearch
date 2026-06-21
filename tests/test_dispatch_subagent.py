@@ -29,12 +29,12 @@ def _valid_plan() -> dict:
     """
     return {
         "id": "plan_test01",
-        "goal": "Improve sample efficiency on DoorKey.",
-        "env_id": "MiniGrid-DoorKey-8x8",
+        "goal": "Improve sample efficiency on Empty-5x5.",
+        "env_id": "MiniGrid-Empty-5x5-v0",
         "reward_fn_spec": "Sparse +1 on reaching the goal, 0 otherwise. Frozen.",
-        "base_hparams": {"lr": 3e-4, "gamma": 0.99, "n_steps": 128},
-        "target_metric": "mean_return_at_500k_steps",
-        "budget_steps": 500000,
+        "base_hparams": {"learning_rate": 3e-4, "gamma": 0.99, "num_steps": 128},
+        "target_metric": "mean_return_at_50k_steps",
+        "budget_steps": 50000,
         "ideas": [
             {
                 "id": "idea_alpha",
