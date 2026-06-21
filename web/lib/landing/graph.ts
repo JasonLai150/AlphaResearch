@@ -164,10 +164,26 @@ export function buildAgentTree(options: BuildTreeOptions = {}): AgentTree {
   const candidates = nodes
     .filter((n) => n.depth >= 1 && n.depth <= Math.min(2, maxDepth))
     .sort((a, b) => a.y - b.y);
+  // Pick the candidate nearest each of four vertical bands. This guarantees four
+  // distinct, well-separated cards (≈0.24 apart) regardless of how the tree's
+  // y-values cluster — index sampling left gaps and overlaps.
   const picks: TreeNode[] = [];
-  for (const slot of [0.12, 0.38, 0.62, 0.88]) {
-    const cand = candidates[Math.round(slot * (candidates.length - 1))];
-    if (cand && !picks.includes(cand)) picks.push(cand);
+  const used = new Set<string>();
+  for (const band of [0.14, 0.38, 0.62, 0.86]) {
+    let best: TreeNode | null = null;
+    let bestDist = Infinity;
+    for (const c of candidates) {
+      if (used.has(c.id)) continue;
+      const d = Math.abs(c.y - band);
+      if (d < bestDist) {
+        bestDist = d;
+        best = c;
+      }
+    }
+    if (best) {
+      picks.push(best);
+      used.add(best.id);
+    }
   }
 
   const kinds: NodeKind[] = ["sim", "stream", "stream", "sim"];
