@@ -1,26 +1,32 @@
 #!/usr/bin/env python3
-"""Stop hook (sub agent): publish the agent's RunResult into the shared volume,
-then push a summary event. SEV-7 atomic write. Never fails the agent.
+"""Stop hook (sub agent): push the agent's RunResult + artifacts to the runner.
 
-The agent is instructed (CLAUDE.md) to write its full RunResult to
-``$ALPHA_WORKSPACE/result.json``. This hook copies that into the per-session
-volume at ``$ALPHA_DISPATCH_DIR/<jid>.result.json`` via a tmp file + atomic
-``os.replace``, then touches ``<jid>.result.json.done`` as a sentinel so the
-runner only ever reads a fully-written result (no torn JSON on crash). If the
-agent produced no/invalid result.json, we publish a ``failed`` result so the
-runner finalizes the job instead of polling it forever.
+PR2: there is no shared volume. The agent is instructed (CLAUDE.md) to write its full
+RunResult to ``$ALPHA_WORKSPACE/result.json`` and its plots under
+``$ALPHA_DISPATCH_DIR/artifacts/$ALPHA_JOB_ID/``. This hook reads both, base64-encodes
+the (small) artifacts, and POSTs everything to ``/internal/result`` — the runner records
+the result, uploads artifacts to GCS, and flips job status. If the agent produced
+no/invalid result.json, we report ``failed`` so the runner finalizes instead of polling
+forever. Telemetry: this must NEVER fail the agent.
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _push import push  # noqa: E402
+
+_ARTIFACT_SIZE_CAP = 10 * 1024 * 1024  # match the runner's per-artifact cap
+_KIND_BY_SUFFIX = {
+    ".png": "plot", ".jpg": "plot", ".jpeg": "plot", ".svg": "plot", ".pdf": "plot",
+    ".pt": "checkpoint", ".ckpt": "checkpoint", ".safetensors": "checkpoint",
+    ".log": "log", ".txt": "log", ".csv": "log", ".json": "log",
+}
 
 
 def _load_result(ws: Path, jid: str) -> dict:
@@ -42,39 +48,55 @@ def _load_result(ws: Path, jid: str) -> dict:
     return data
 
 
+def _collect_artifacts(adir: Path) -> list[dict]:
+    out: list[dict] = []
+    if not adir.is_dir():
+        return out
+    for p in sorted(adir.rglob("*")):
+        if not p.is_file():
+            continue
+        try:
+            data = p.read_bytes()
+        except OSError:
+            continue
+        if not data or len(data) > _ARTIFACT_SIZE_CAP:
+            continue
+        out.append({
+            "name": p.name,
+            "kind": _KIND_BY_SUFFIX.get(p.suffix.lower(), "other"),
+            "b64": base64.b64encode(data).decode("ascii"),
+        })
+    return out
+
+
 def main() -> None:
     jid = os.environ.get("ALPHA_JOB_ID", "")
+    sid = os.environ.get("ALPHA_SESSION_ID", "")
     result: dict = {"job_id": jid, "status": "failed", "summary": "finalize error", "metrics": {}}
+    artifacts: list[dict] = []
     try:
         ws = Path(os.environ.get("ALPHA_WORKSPACE", "/workspace"))
         dispatch = Path(os.environ.get("ALPHA_DISPATCH_DIR", "/workspace/.dispatched"))
         result = _load_result(ws, jid)
-        result["job_id"] = jid  # the runner addresses results by ALPHA_JOB_ID
-
-        dispatch.mkdir(parents=True, exist_ok=True)
-        tmp = dispatch / (jid + ".result.json.tmp")
-        final = dispatch / (jid + ".result.json")
-        tmp.write_text(json.dumps(result))
-        os.replace(tmp, final)  # atomic rename — no torn reads
-        (dispatch / (jid + ".result.json.done")).write_text(datetime.now(UTC).isoformat())
+        result["job_id"] = jid
+        artifacts = _collect_artifacts(dispatch / "artifacts" / jid)
     except Exception as err:  # noqa: BLE001 — telemetry hook must never fail the agent
         print(f"[finalize] {err}", file=sys.stderr)
 
-    try:
-        depth = int(os.environ.get("ALPHA_DEPTH") or "1")
-    except ValueError:
-        depth = 1
-
-    push(
-        "/internal/events",
-        {
-            "session_id": os.environ.get("ALPHA_SESSION_ID", ""),
-            "job_id": jid,
-            "depth": depth,
-            "type": "summary",
-            "payload": {"finished": True, "summary": str(result.get("summary", ""))[:240]},
-        },
-    )
+    body = {
+        "job_id": jid,
+        "session_id": sid,
+        "status": result.get("status", "done"),
+        "summary": str(result.get("summary", "")),
+        "metrics": result.get("metrics", {}) or {},
+        "artifacts": artifacts,
+    }
+    if result.get("patch"):
+        body["patch"] = result["patch"]
+    if result.get("base_ref"):
+        body["base_ref"] = result["base_ref"]
+    # Larger timeout: the runner uploads artifacts to GCS synchronously in the handler.
+    push("/internal/result", body, timeout=30.0)
     sys.exit(0)
 
 

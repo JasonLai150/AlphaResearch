@@ -199,6 +199,70 @@ async def test_dispatch_rejects_fanout(client, fake_redis, monkeypatch):
     assert r2.status_code == 429
 
 
+# ---- result (PR2) ------------------------------------------------------
+
+import base64  # noqa: E402
+
+
+async def test_result_records_run_and_artifact(client, fake_redis, monkeypatch):
+    from infra import store as store_mod
+    monkeypatch.setattr(store_mod.settings, "gcs_bucket", "")  # use local artifact path
+    await _seed_parent()
+    await store.create_job(Job(id="j_c", session_id="s_a", parent_job_id="j_root", depth=1,
+                               kind=JobKind.agent, status=JobStatus.running))
+    tok = await store.mint_agent_token("s_a")
+    png = base64.b64encode(b"PNGDATA").decode()
+    r = await client.post("/internal/result",
+                          json={"job_id": "j_c", "session_id": "s_a", "status": "done",
+                                "summary": "got 0.8", "metrics": {"score": 0.8},
+                                "artifacts": [{"name": "p.png", "kind": "plot", "b64": png}]},
+                          headers=_bearer(tok))
+    assert r.status_code == 202 and r.json()["recorded"] is True
+    assert (await store.get_job("j_c")).status == JobStatus.done
+    run = await store.get_run("j_c")
+    assert run.status == "done" and run.metrics["score"] == 0.8
+    arts = await store.list_artifacts_for("j_c")
+    assert len(arts) == 1 and arts[0].kind == "plot"
+
+
+async def test_result_failed_status_marks_job_failed(client, fake_redis):
+    await _seed_parent()
+    await store.create_job(Job(id="j_c", session_id="s_a", parent_job_id="j_root", depth=1,
+                               kind=JobKind.agent, status=JobStatus.running))
+    tok = await store.mint_agent_token("s_a")
+    r = await client.post("/internal/result",
+                          json={"job_id": "j_c", "session_id": "s_a", "status": "failed",
+                                "summary": "diverged"},
+                          headers=_bearer(tok))
+    assert r.status_code == 202
+    assert (await store.get_job("j_c")).status == JobStatus.failed
+
+
+async def test_result_is_idempotent(client, fake_redis):
+    await _seed_parent()
+    await store.create_job(Job(id="j_c", session_id="s_a", parent_job_id="j_root", depth=1,
+                               kind=JobKind.agent, status=JobStatus.running))
+    tok = await store.mint_agent_token("s_a")
+    body = {"job_id": "j_c", "session_id": "s_a", "status": "done", "summary": "first"}
+    r1 = await client.post("/internal/result", json=body, headers=_bearer(tok))
+    r2 = await client.post("/internal/result", json={**body, "summary": "second"},
+                           headers=_bearer(tok))
+    assert r1.status_code == 202 and r2.status_code == 202
+    assert r2.json().get("duplicate") is True
+    assert (await store.get_run("j_c")).summary == "first"  # first write wins
+
+
+async def test_result_rejects_cross_session(client, fake_redis):
+    await _seed_parent(sid="s_a", jid="j_root")
+    await store.create_job(Job(id="j_c", session_id="s_a", parent_job_id="j_root", depth=1,
+                               kind=JobKind.agent, status=JobStatus.running))
+    tok_b = await store.mint_agent_token("s_b")
+    r = await client.post("/internal/result",
+                          json={"job_id": "j_c", "session_id": "s_b", "status": "done"},
+                          headers=_bearer(tok_b))
+    assert r.status_code in (403, 404)  # token owns s_b; job lives in s_a
+
+
 # ---- children ----------------------------------------------------------
 
 async def test_children_returns_statuses(client, fake_redis):

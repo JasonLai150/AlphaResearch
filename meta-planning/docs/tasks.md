@@ -49,9 +49,11 @@ Modal volume is broken **both** directions (dispatch out + result back), not jus
 - [x] **PR1 `feat/headless-agents`** — `GET /internal/bootstrap` (goal+mode) · `claude -p`
       launchers · non-root `agent` user (claude blocks --dangerously-skip-permissions as root).
       **Verified live:** main agent boots headless, fetches goal, dispatches 3 sub-agents.
-- [ ] **PR2 `feat/two-way-push`** — dispatch record as Modal arg · `POST /internal/result`
-      (base64 artifacts → GCS) · reconcile reads Redis · retire the Modal Volume.
+- [x] **PR2 `feat/two-way-push`** (code) — dispatch record as Modal arg · `POST /internal/result`
+      (base64 artifacts → GCS) · reconcile reads Redis · Modal Volume removed. 77 tests pass.
+      Runner also needs Modal creds (`MODAL_TOKEN_*` secrets) to spawn from Cloud Run — added.
 - [~] **M3/M4 round-trip** superseded by PR1+PR2 (the volume bridge is removed, not hydrated).
+      PR2 deploy + live e2e verification pending.
 - [ ] **M5 — real RL training**: `run_experiment_real` still delegates to the synthetic stub; add a
       short minigrid+PPO loop (lazy torch/sb3) and the deps to the Modal image.
 - [ ] **M6 — web UI live demo**: plot `JobNode.rewards` (recharts), real parent/child tree via

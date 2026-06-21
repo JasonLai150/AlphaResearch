@@ -160,9 +160,9 @@ def test_log_transcript_posts(recorder):
     assert body["content"] == "hello"
 
 
-def test_sub_finalize_writes_atomic_result(recorder, tmp_path):
-    """SEV-7: finalize copies the agent's own result.json (per sub-agent CLAUDE.md)
-    into the volume atomically + a .done sentinel."""
+def test_sub_finalize_posts_result_and_artifacts(recorder, tmp_path):
+    """PR2: finalize reads result.json + artifacts and POSTs them to /internal/result
+    (no shared volume)."""
     ws = tmp_path / "workspace"
     dispatch = tmp_path / "dispatched"
     ws.mkdir()
@@ -170,40 +170,32 @@ def test_sub_finalize_writes_atomic_result(recorder, tmp_path):
         "job_id": "j_c", "idea_id": "idea_1", "status": "done",
         "summary": "ppo+icm hit 0.82", "metrics": {"score": 0.82}, "validated": True,
     }))
+    art = dispatch / "artifacts" / "j_c"
+    art.mkdir(parents=True)
+    (art / "loss.png").write_bytes(b"\x89PNG\r\n fake plot bytes")
 
     env = _base_env(
-        recorder.base_url,
-        ALPHA_DEPTH="1",
-        ALPHA_JOB_ID="j_c",
-        ALPHA_WORKSPACE=str(ws),
-        ALPHA_DISPATCH_DIR=str(dispatch),
+        recorder.base_url, ALPHA_DEPTH="1", ALPHA_JOB_ID="j_c",
+        ALPHA_WORKSPACE=str(ws), ALPHA_DISPATCH_DIR=str(dispatch),
     )
     proc = _run_hook(SUB_HOOKS / "finalize.py", "", env)
     assert proc.returncode == 0, proc.stderr
 
-    result_path = dispatch / "j_c.result.json"
-    done_path = dispatch / "j_c.result.json.done"
-    tmp_leftover = dispatch / "j_c.result.json.tmp"
-
-    assert result_path.exists(), "result.json not written"
-    assert done_path.exists(), "sentinel .done not written"
-    assert not tmp_leftover.exists(), "leftover .tmp not cleaned up"
-
-    result = json.loads(result_path.read_text())
-    assert result["job_id"] == "j_c"
-    assert result["status"] == "done"
-    assert result["summary"] == "ppo+icm hit 0.82"
-    assert result["metrics"] == {"score": 0.82}
-
-    # The summary event must have been pushed to the runner.
-    events = [r for r in recorder.records if r["path"] == "/internal/events"]
-    assert len(events) == 1, recorder.records
-    assert events[0]["body"]["type"] == "summary"
-    assert events[0]["body"]["payload"]["finished"] is True
+    posts = [r for r in recorder.records if r["path"] == "/internal/result"]
+    assert len(posts) == 1, recorder.records
+    body = posts[0]["body"]
+    assert posts[0]["authorization"] == f"Bearer {TOKEN}"
+    assert body["job_id"] == "j_c" and body["session_id"] == "s_1"
+    assert body["status"] == "done"
+    assert body["summary"] == "ppo+icm hit 0.82"
+    assert body["metrics"] == {"score": 0.82}
+    assert len(body["artifacts"]) == 1
+    a = body["artifacts"][0]
+    assert a["name"] == "loss.png" and a["kind"] == "plot" and a["b64"]
 
 
-def test_sub_finalize_missing_result_marks_failed(recorder, tmp_path):
-    """SEV-7: no result.json -> a 'failed' result is still published (+ sentinel)."""
+def test_sub_finalize_missing_result_posts_failed(recorder, tmp_path):
+    """PR2: no result.json -> a 'failed' result is still POSTed so the runner finalizes."""
     ws = tmp_path / "workspace"
     dispatch = tmp_path / "dispatched"
     ws.mkdir()
@@ -213,9 +205,10 @@ def test_sub_finalize_missing_result_marks_failed(recorder, tmp_path):
     )
     proc = _run_hook(SUB_HOOKS / "finalize.py", "", env)
     assert proc.returncode == 0, proc.stderr
-    result = json.loads((dispatch / "j_c.result.json").read_text())
-    assert result["status"] == "failed"
-    assert (dispatch / "j_c.result.json.done").exists()
+    posts = [r for r in recorder.records if r["path"] == "/internal/result"]
+    assert len(posts) == 1
+    assert posts[0]["body"]["status"] == "failed"
+    assert posts[0]["body"]["artifacts"] == []
 
 
 def test_hook_swallows_unreachable_runner():
