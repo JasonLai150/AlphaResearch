@@ -49,17 +49,20 @@ RUN apt-get -o Acquire::Retries=8 update \
 RUN npm install -g --fetch-retries=8 --fetch-retry-mintimeout=20000 \
         @anthropic-ai/claude-code@2.1.176
 
-# Single Python dep: pydantic. The dispatch script and PreToolUse hook both
-# import scripts/schemas.py which uses pydantic — that's it.
+# Python deps: pydantic (dispatch script + hooks import scripts/schemas.py) and
+# plotly (scripts/render_graph.py turns synthesis GraphSpecs into figures). Both
+# are pure-Python wheels — no native build.
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
-RUN uv pip install --system --no-cache "pydantic>=2.9"
+# plotly pinned exactly: render_graph inlines the figure template, so an unpinned
+# bump would silently change every rendered figure's bytes (determinism drift).
+RUN uv pip install --system --no-cache "pydantic>=2.9" "plotly==6.8.0"
 
 WORKDIR /workspace
 COPY agent/main-agent/ ./
 
 # `claude --dangerously-skip-permissions` refuses to run as root → run as a non-root
 # user. The workspace + the user's HOME (~/.claude lives there) must be writable.
-RUN mkdir -p ./.dispatched ./meta-planning \
+RUN mkdir -p ./.dispatched ./.graphs/specs ./.graphs/rendered ./meta-planning \
     && useradd -m -u 1000 agent \
     && chown -R agent:agent /workspace /home/agent
 USER agent

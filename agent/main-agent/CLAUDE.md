@@ -13,18 +13,16 @@ calls, defend them, reject ideas that won't move the metric.
 
 ## Workflow (in order)
 
-1. **Probe the user.** Before any planning, ask 2-4 sharp clarifying questions
-   that change what the plan looks like. Examples: what's the compute budget,
-   what's the metric they care about (sample efficiency vs final return), are
-   there constraints you must not change (env, reward, base algorithm). Do not
-   ask cosmetic questions. If no human is reachable (non-interactive run),
-   proceed with reasonable defaults and state them up front.
+1. **Probe the user — only if a human is actually reachable.** When there's a
+   human on the other end, ask 2-4 sharp clarifying questions that change what
+   the plan looks like: compute budget, the metric they care about (sample
+   efficiency vs final return), constraints you must not change (env, reward,
+   base algorithm). No cosmetic questions.
 
-   > **Non-interactive gate:** when the env var `ALPHA_NONINTERACTIVE=1` is set
-   > (every batch/Cloud-Run run today), there is NO human on the other end —
-   > SKIP the questions entirely, state your assumptions explicitly, and go
-   > straight to step 2. Blocking to ask would hang the run. (A future
-   > conversational mode will unset this and route the questions to the user.)
+   In a headless/batch run (you were launched with `claude -p` — no human can
+   answer), do NOT ask. State your key assumptions explicitly and go straight to
+   step 2. Use your own judgment about which mode you're in; the launch prompt
+   tells you when there's no human. Asking into a headless run just wastes a turn.
 
 2. **Use the `research` skill** (`skills/research/SKILL.md`) to go from the
    user's goal to a single `ResearchPlan` JSON object. The skill drives:
@@ -47,8 +45,44 @@ calls, defend them, reject ideas that won't move the metric.
 
    Rank by `plan.target_metric`, write a synthesis: what moved the metric, what
    didn't, what to try next. Be willing to conclude "no idea worked, here's why."
-   Do NOT poll faster than ~5s — the runner reconciles on that cadence, so faster
-   checks return identical state.
+   Then use the **`plotly-graphs` skill** to turn the comparison into figures
+   (per-idea delta vs baseline, metric-vs-steps curves) — these get shipped to the
+   user. Do NOT poll faster than ~5s — the runner reconciles on that cadence, so
+   faster checks return identical state.
+
+---
+
+## Working memory (don't lose state on long runs)
+
+A research session can run long and **its context will get compacted**. Do not
+keep load-bearing state only in your head:
+
+- Maintain **`./session_state.md`** as you go — the plan id, what you've
+  dispatched (job ids), what came back, and the *why* behind decisions. 1-3 lines
+  per update.
+- After a compaction (you'll get a PreCompact reminder), **rebuild from disk**:
+  re-read `session_state.md` and run `python3 scripts/check_children.py` to
+  recover dispatch/result state. Don't trust your summarized memory. The full
+  pre-compaction transcript is snapshotted under `./.dispatched/snapshots/`.
+
+---
+
+## Autonomous loop rounds
+
+You may be launched as **one round of an autonomous loop** (the launch prompt
+tells you: "round N of max M", with prior rounds' best metrics). When you are:
+
+- Do exactly ONE round — plan → dispatch → synthesize → graphs — informed by the
+  prior rounds: **deepen** the current approach if it's still gaining, or
+  **escalate** to a new approach class if it has plateaued.
+- **Before exiting, report the round** so the runner can decide whether to continue:
+
+      python3 scripts/report_round.py --round-index N --plan-id <id> \
+          --best-metric <value> --summary "<one line>"
+
+- Then exit. **Do NOT loop yourself.** The runner owns the stop policy (max rounds,
+  budget, target metric, plateau) and spawns the next round — a fresh execution that
+  inherits this round's results via bootstrap. Looping in-process would double the work.
 
 ---
 
@@ -97,8 +131,9 @@ tool result.
 
 - **Read**: anything in this folder (`CLAUDE.md`, `skills/`, `scripts/`),
   anything in `./.dispatched/`, anything in the cwd.
-- **Write**: `./.dispatched/plan.json` (your plan), `./meta-planning/` (notes —
-  1-3 lines per update).
+- **Write**: `./.dispatched/plan.json` (your plan), `./.graphs/specs/<id>.json`
+  (graph specs — see the `plotly-graphs` skill), `./session_state.md` (working
+  journal), `./meta-planning/` (notes — 1-3 lines per update).
 - **Do NOT touch**: anything outside this container's `/workspace`. Sub-agents
   see their own isolated container; you cannot reach them except by reading
   their result files.

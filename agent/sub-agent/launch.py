@@ -36,7 +36,6 @@ def main() -> None:
     if not jid:
         raise SystemExit("[launch] missing ALPHA_JOB_ID")
     model = os.environ.get("ALPHA_MODEL", "claude-sonnet-4-6")
-    os.environ["ALPHA_NONINTERACTIVE"] = "1"
     print(f"[launch] sub-agent job={jid} model={model}", file=sys.stderr)
     argv = ["claude", "-p", _prompt(jid), "--model", model, "--dangerously-skip-permissions"]
     os.execvp("claude", argv)

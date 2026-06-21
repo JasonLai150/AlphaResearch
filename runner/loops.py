@@ -24,9 +24,18 @@ import time
 
 import sentry_sdk
 
+from infra import loop_policy, store
 from infra.observability import tag_alpha
-from infra import store
-from infra.schemas import EventEnvelope, EventType, JobStatus, RunResult
+from infra.schemas import (
+    EventEnvelope,
+    EventType,
+    Job,
+    JobKind,
+    JobStatus,
+    LoopStatus,
+    RoundRecord,
+    RunResult,
+)
 from runner.cloud_run_client import poll_cloud_run_exec, spawn_main_agent_job
 from runner.modal_client import (
     cancel_modal_call,
@@ -206,6 +215,56 @@ async def _finalize_done(job) -> None:
     await store.write_run(RunResult(job_id=jid, status="done", summary=""))
     await store.set_job_status(jid, JobStatus.done)
     await _emit(sid, jid, 0, EventType.summary, {"summary": "", "metrics": {}})
+    await _advance_loop(job)  # autonomous sessions: maybe spawn the next round
+
+
+# ---- autonomous loop advancement (v1.5) --------------------------------
+
+async def _advance_loop(job) -> None:
+    """A round (depth-0 agent) just finished. For an autonomous session, apply the
+    stop policy and either spawn the next round or mark the loop terminal. This is
+    what gives the loop its OWN terminal state, distinct from any single job's."""
+    sid = job.session_id
+    session = await store.get_session(sid)
+    if session is None or session.mode != "autonomous":
+        return
+    loop = await store.get_loop(sid)
+    if loop is None or loop.status != LoopStatus.running:
+        return
+
+    # Backstop: ensure this finished round is counted even if the agent crashed before
+    # POSTing /internal/loop/round — otherwise len(rounds) never grows and max_rounds
+    # can't fire (only budget could), risking a runaway loop.
+    if not any(r.job_id == job.id for r in loop.rounds):
+        await store.append_round(sid, RoundRecord(
+            round_index=len(loop.rounds) + 1, job_id=job.id, best_metric=None,
+            summary="(round exited without a report)"))
+        loop = await store.get_loop(sid)
+
+    r = store.get_redis()
+    budget_raw = await r.get(store._budget_key(sid))
+    budget = int(budget_raw) if budget_raw is not None else 0
+
+    decision = loop_policy.decide(loop, budget)
+    if decision.action == "stop":
+        await store.set_loop_status(sid, decision.status, decision.reason)
+        await _emit(sid, job.id, 0, EventType.status,
+                    {"phase": "loop_stopped", "status": decision.status.value,
+                     "reason": decision.reason})
+        return
+
+    # continue: create + enqueue the next round's depth-0 agent execution.
+    next_round = len(loop.rounds) + 1
+    new_id = store.new_id("j")
+    await store.create_job(Job(
+        id=new_id, session_id=sid, depth=0, kind=JobKind.agent,
+        params={"goal": session.goal}, status=JobStatus.queued, backend="cloud_run_job"))
+    await store.set_loop_current_job(sid, new_id)
+    # Re-point the session root so session_loop spawns THIS round's job (not round 1's).
+    await r.json().set(store._session_key(sid), "$.root_job_id", new_id)
+    await store.enqueue_session(sid)
+    await _emit(sid, new_id, 0, EventType.status,
+                {"phase": "round_started", "round_index": next_round})
 
 
 async def _finalize_failed(job, reason: str = "sandbox died") -> None:
@@ -214,6 +273,11 @@ async def _finalize_failed(job, reason: str = "sandbox died") -> None:
     await store.set_job_status(jid, JobStatus.failed)
     await _emit(sid, jid, job.depth, EventType.status, {"status": "failed", "reason": reason})
     await _cancel_orphans_if_terminal(job)
+    # A failed depth-0 round must still advance the loop — otherwise an OOM/timeout
+    # leaves loop status=running forever (no next round spawned, never reclaimed).
+    # The round is counted (backstop) and the policy retries or stops on max_rounds.
+    if job.depth == 0:
+        await _advance_loop(job)
 
 
 async def _cancel_orphans_if_terminal(job) -> None:
@@ -283,6 +347,12 @@ async def _cleanup_terminal_sessions() -> None:
     now = time.time()
     for sid in await _active_sessions():
         if not await _session_fully_terminal(sid):
+            continue
+        # An autonomous loop is "between rounds" when its round job is momentarily
+        # terminal but the loop isn't. Never reclaim (revoke the token) until the loop
+        # itself reaches a terminal status — otherwise the next round would 401.
+        loop = await store.get_loop(sid)
+        if loop is not None and loop.status == LoopStatus.running:
             continue
         # Grace window: stamp the first-terminal time, and only do the irreversible
         # cleanup once it's been terminal for CLEANUP_GRACE_SECONDS — so a late

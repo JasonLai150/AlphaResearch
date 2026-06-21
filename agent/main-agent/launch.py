@@ -48,8 +48,9 @@ def _bootstrap(runner_url: str, token: str) -> dict:
     raise SystemExit(f"[launch] bootstrap failed after {_BOOTSTRAP_ATTEMPTS}: {last!r}")
 
 
-def _prompt(goal: str) -> str:
-    return (
+def _prompt(ctx: dict) -> str:
+    goal = (ctx.get("goal") or "").strip()
+    base = (
         "You are the research director for an autonomous RL research session.\n\n"
         f"The user's goal:\n{goal}\n\n"
         "This is a NON-INTERACTIVE batch run — there is no human to answer questions. "
@@ -57,8 +58,34 @@ def _prompt(goal: str) -> str:
         "  1. State your key assumptions explicitly (do NOT ask the user anything).\n"
         "  2. Use the research skill to produce one ResearchPlan.\n"
         "  3. Dispatch one sub-agent per idea (dispatch-subagents skill).\n"
-        "  4. Wait for the children, then synthesize their results.\n"
-        "Run to completion and exit. Never block waiting for user input."
+        "  4. Wait for the children, synthesize their results, and produce Plotly\n"
+        "     figures of the findings (plotly-graphs skill).\n"
+    )
+    loop = ctx.get("loop") if ctx.get("mode") == "autonomous" else None
+    if not loop:
+        return base + "Run to completion and exit. Never block waiting for user input."
+
+    prior = loop.get("prior_rounds") or []
+    prior_lines = "\n".join(
+        f"    - round {p.get('round_index')}: best_metric={p.get('best_metric')} "
+        f"— {(p.get('summary') or '')[:120]}"
+        for p in prior
+    ) or "    (none yet — this is the first round)"
+    return (
+        base
+        + (
+            f"\nThis is ONE ROUND of an AUTONOMOUS LOOP: round {loop.get('round')} of "
+            f"max {loop.get('max_rounds')}"
+            + (f" (target metric {loop.get('goal_metric')})" if loop.get("goal_metric") else "")
+            + ".\nPrior rounds:\n" + prior_lines + "\n\n"
+            "Use the prior rounds to DECIDE this round's direction: deepen the current "
+            "approach if it's still gaining, or escalate to a new approach class if it's "
+            "plateaued. When the round is done, BEFORE exiting, report it:\n"
+            f"    python3 scripts/report_round.py --round-index {loop.get('round')} "
+            "--plan-id <plan_id> --best-metric <value> --summary <one line>\n"
+            "Then exit. Do NOT loop here yourself — the runner applies the stop policy "
+            "and spawns the next round. Run this one round to completion and exit."
+        )
     )
 
 
@@ -110,8 +137,10 @@ def main() -> None:
         raise SystemExit("[launch] bootstrap returned an empty goal")
     print(f"[launch] mode={ctx.get('mode')} goal={goal[:120]!r}", file=sys.stderr)
 
-    os.environ["ALPHA_NONINTERACTIVE"] = "1"  # CLAUDE.md gates its clarifying-Q step on this
-    argv = ["claude", "-p", _prompt(goal), "--model", model, "--dangerously-skip-permissions"]
+    # No interactivity flag: `claude -p` is inherently headless (no stdin for the
+    # model), and the bootstrap prompt already states there is no human to answer
+    # questions. The agent decides for itself whether to ask vs. assume.
+    argv = ["claude", "-p", _prompt(ctx), "--model", model, "--dangerously-skip-permissions"]
     os.execvp("claude", argv)  # replace this process; claude inherits cwd=/workspace + env
 
 
