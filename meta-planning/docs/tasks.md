@@ -63,6 +63,10 @@ Modal volume is broken **both** directions (dispatch out + result back), not jus
 - [x] **M6 — web UI live demo**: recharts `JobNode.rewards`, real parent/child tree via
       `parentJobId`, `Last-Event-ID` resume + reconnect. Frontend-complete pass on
       `feat/frontend-complete`: toast + full error/empty/loading UX, responsive drawers,
-      Vitest+RTL suite (37) + backend resume/error tests, eslint/prettier. Live e2e re-verify pending (Redis was down).
+      Vitest+RTL suite (37) + backend resume/error tests, eslint/prettier.
+      **Live e2e re-verified 2026-06-21** (local-sim): full SSE chat stream + lead-only chat +
+      sub-agent tree, frontend↔backend end-to-end. Deployed backbone re-verified post Redis fix
+      (`POST` → real Cloud Run Job → `status` over SSE); full deployed UI demo still needs a backend
+      redeploy (deployed build lacks `GET /sessions` + `/messages`). See `docs/e2e-live-sse-verification.md`.
 - [ ] **M7 — execute the deploy**: run `gcp_bootstrap.sh` + `deploy_cloudrun.sh` + `modal deploy`,
       then verify Redis Cloud reachable from Cloud Run egress + a `/healthz` smoke.
