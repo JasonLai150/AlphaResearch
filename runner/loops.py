@@ -20,23 +20,15 @@ successful spawn — a spawn that raises leaves the entry for the next pass.
 from __future__ import annotations
 
 import asyncio
-import json
 import time
 
 from infra import store
 from infra.schemas import EventEnvelope, EventType, JobStatus, RunResult
 from runner.cloud_run_client import poll_cloud_run_exec, spawn_main_agent_job
-from runner.gcs_uploader import upload_artifacts
 from runner.modal_client import (
-    artifacts_dir,
     cancel_modal_call,
-    delete_session_volume,
     poll_modal_call,
-    reload_volume,
-    result_done_sentinel,
-    results_for,
     spawn_sub_agent,
-    write_dispatch_record,
 )
 
 POLL_INTERVAL = 2.0
@@ -141,8 +133,9 @@ async def _consume_dispatches_once() -> None:
             await r.xdel(store.DISPATCH_QUEUE, entry_id)  # SEV-1
             continue
         try:
-            write_dispatch_record(job.session_id, jid, _record_from_job(job))
-            sandbox_id = await spawn_sub_agent(jid, job.session_id)
+            # PR2: the dispatch record rides as a Modal call arg (no shared volume) —
+            # the sub_agent function writes it into its own /workspace/.dispatched on boot.
+            sandbox_id = await spawn_sub_agent(jid, job.session_id, _record_from_job(job))
         except Exception as e:  # noqa: BLE001
             print(f"[dispatch_loop] spawn failed for {jid}: {e!r}")
             continue
@@ -161,51 +154,37 @@ async def _poll(job) -> str:
 
 
 async def _finalize_done(job) -> None:
-    """The sandbox finished. For a sub-agent, honor its self-reported status from
-    result.json (a sub-agent that exited cleanly but reports status='failed' must NOT
-    be recorded as a success). The main agent (depth 0) has no structured result."""
-    sid, jid = job.session_id, job.id
-    summary, metrics, reported = "", {}, "done"
-    if job.depth >= 1:
-        await reload_volume(sid)
-        result_path, _ = results_for(sid, jid)
-        if not result_done_sentinel(sid, jid).exists():
-            # SEV-7: completed but no fully-written result -> failed, not silent empty done.
-            await _finalize_failed(job, reason="completed without result sentinel")
-            return
-        try:
-            payload = json.loads(result_path.read_text())
-        except (json.JSONDecodeError, OSError):
-            await _finalize_failed(job, reason="result.json present but unreadable/invalid")
-            return
-        summary = payload.get("summary", "")
-        metrics = payload.get("metrics", {}) or {}
-        reported = (payload.get("status") or "done").lower()
+    """The sandbox finished.
 
-    artifacts = await upload_artifacts(sid, jid, artifacts_dir(sid, jid))  # SEV-10 idempotent
-    failed = reported == "failed"
-    run_status = "failed" if failed else reported  # done | partial | failed
-    job_status = JobStatus.failed if failed else JobStatus.done
-    await store.write_run(
-        RunResult(job_id=jid, status=run_status, summary=summary, metrics=metrics))
-    await store.set_job_status(jid, job_status)
-    await _emit(sid, jid, job.depth, EventType.summary,
-                {"summary": summary[:240], "metrics": metrics,
-                 "artifact_count": len(artifacts), "reported_status": reported})
-    # Only a FAILED/terminal parent orphans children (SEV-8). On a graceful success we
-    # leave any still-running children alone — they finalize independently via reconcile.
-    if failed:
-        await _cancel_orphans_if_terminal(job)
+    PR2: a sub-agent (depth>=1) pushes its result + artifacts to POST /internal/result,
+    which records the RunResult and flips job status BEFORE the Modal call returns. So
+    normally the job is already terminal by the time we'd reconcile it. If we get here
+    with the job still running, the push must have NOT happened (the sub-agent crashed or
+    its finalize hook failed to POST) -> fail it. The main agent (depth 0) has no
+    structured result, so we just mark it done."""
+    sid, jid = job.session_id, job.id
+    if job.depth >= 1:
+        run = await store.get_run(jid)
+        if run is None:
+            await _finalize_failed(job, reason="sub-agent exited without posting a result")
+            return
+        failed = (run.status or "done").lower() == "failed"
+        await store.set_job_status(jid, JobStatus.failed if failed else JobStatus.done)
+        await _emit(sid, jid, job.depth, EventType.summary,
+                    {"summary": (run.summary or "")[:240], "metrics": run.metrics,
+                     "reported_status": run.status})
+        if failed:  # SEV-8: a failed parent orphans its children
+            await _cancel_orphans_if_terminal(job)
+        return
+
+    # depth 0 (main agent): no structured result to read.
+    await store.write_run(RunResult(job_id=jid, status="done", summary=""))
+    await store.set_job_status(jid, JobStatus.done)
+    await _emit(sid, jid, 0, EventType.summary, {"summary": "", "metrics": {}})
 
 
 async def _finalize_failed(job, reason: str = "sandbox died") -> None:
     sid, jid = job.session_id, job.id
-    _, failed_path = results_for(sid, jid)
-    try:
-        failed_path.parent.mkdir(parents=True, exist_ok=True)
-        failed_path.write_text(json.dumps({"job_id": jid, "status": "failed", "reason": reason}))
-    except OSError:
-        pass
     await store.write_run(RunResult(job_id=jid, status="failed", summary=reason))
     await store.set_job_status(jid, JobStatus.failed)
     await _emit(sid, jid, job.depth, EventType.status, {"status": "failed", "reason": reason})
@@ -279,9 +258,9 @@ async def _cleanup_terminal_sessions() -> None:
         first = await r.get(ts_key)
         if first is not None and (now - float(first)) < CLEANUP_GRACE_SECONDS:
             continue
-        # SET NX flag: do the volume delete + token revoke exactly once.
+        # SET NX flag: revoke the session token exactly once. (PR2: no per-session
+        # Modal volume to reclaim anymore — results come back over HTTP.)
         if await r.set(f"session:{sid}:cleaned", "1", nx=True, ex=7 * 24 * 3600):
-            await delete_session_volume(sid)
             await store.revoke_session_token(sid)
             await _emit(sid, "", 0, EventType.status, {"status": "session_cleaned"})
 

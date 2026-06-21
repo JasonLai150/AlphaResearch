@@ -17,6 +17,7 @@ ENV PYTHONUNBUFFERED=1 \
     DEBIAN_FRONTEND=noninteractive \
     UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
+    UV_HTTP_TIMEOUT=300 \
     PATH="/app/.venv/bin:$PATH" \
     ALPHA_VOLUME_ROOT=/mnt/alpha-volumes
 

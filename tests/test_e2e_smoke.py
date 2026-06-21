@@ -1,22 +1,21 @@
 """End-to-end smoke: POST /sessions -> session_loop spawns main agent -> main agent
-POSTs /internal/dispatch -> dispatch_loop spawns sub-agent -> sub-agent writes its
-result + artifact into the volume -> reconcile_loop finalizes + uploads -> GET
-/sessions/{sid}/full shows the whole tree.
+POSTs /internal/dispatch -> dispatch_loop spawns sub-agent -> sub-agent POSTs
+/internal/result (result + artifact) -> GET /sessions/{sid}/full shows the whole tree.
 
 Only the cloud spawns/polls and the GCS network call are mocked; the API, the
 internal router, the runner loops, the store, and the artifact path all run for real
-(fakeredis). This is the full Cloud-Run-main-agent + Modal-sub-agent arch."""
+(fakeredis). PR2: results come back over HTTP (no Modal Volume)."""
 
 from __future__ import annotations
 
-import json
+import base64
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from infra import store
-from runner import loops, modal_client
+from runner import loops
 
 pytestmark = pytest.mark.asyncio
 
@@ -62,40 +61,33 @@ async def test_end_to_end_session_dispatch_reconcile(client, fake_redis):
     assert dr.status_code == 202
     assert (await store.get_job("j_c")).parent_job_id == root_id
 
-    # 4. dispatch_loop spawns the sub-agent Modal Function.
-    with patch("runner.loops.spawn_sub_agent", AsyncMock(return_value="sb_c")), \
-         patch("runner.loops.write_dispatch_record", MagicMock()):
+    # 4. dispatch_loop spawns the sub-agent Modal Function (record passed as a call arg).
+    with patch("runner.loops.spawn_sub_agent", AsyncMock(return_value="sb_c")):
         await loops._consume_dispatches_once()
     assert (await store.get_job("j_c")).sandbox_id == "sb_c"
 
-    # 5. Simulate the sub-agent finishing: result.json + .done sentinel + an artifact
-    #    land in the shared volume.
-    result_path, _ = modal_client.results_for(sid, "j_c")
-    result_path.parent.mkdir(parents=True, exist_ok=True)
-    result_path.write_text(json.dumps({
-        "job_id": "j_c", "status": "done", "summary": "ppo+icm hit 0.82",
-        "metrics": {"score": 0.82},
-    }))
-    modal_client.result_done_sentinel(sid, "j_c").write_text("done")
-    art = modal_client.artifacts_dir(sid, "j_c")
-    art.mkdir(parents=True, exist_ok=True)
-    (art / "loss.png").write_bytes(b"PNGSTUB")
+    # 5. The sub-agent reports its result + a plot over the internal API (PR2: push,
+    #    no shared volume). This finalizes the child + uploads the artifact (mocked GCS).
+    png = base64.b64encode(b"PNGSTUB").decode()
+    with patch("infra.store._gcs_client", _mock_client):
+        rr = await client.post(
+            "/internal/result",
+            json={"job_id": "j_c", "session_id": sid, "status": "done",
+                  "summary": "ppo+icm hit 0.82", "metrics": {"score": 0.82},
+                  "artifacts": [{"name": "loss.png", "kind": "plot", "b64": png}]},
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+    assert rr.status_code == 202
 
-    # 6. reconcile: child done (Modal), root still running (Cloud Run). Real
-    #    upload_artifacts runs against a mocked GCS client.
-    async def poll_modal(sb):
-        return "done" if sb == "sb_c" else "running"
-
-    with patch("runner.loops.poll_modal_call", AsyncMock(side_effect=poll_modal)), \
-         patch("runner.loops.poll_cloud_run_exec", AsyncMock(return_value="running")), \
-         patch("runner.loops.reload_volume", AsyncMock()), \
-         patch("runner.loops.delete_session_volume", AsyncMock()), \
-         patch("infra.store._gcs_client", _mock_client):
-        await loops._reconcile_once()
-
+    # the result POST already finalized the child.
     assert (await store.get_job("j_c")).status.value == "done"
     run = await store.get_run("j_c")
     assert run is not None and run.summary == "ppo+icm hit 0.82" and run.metrics["score"] == 0.82
+
+    # 6. reconcile is a no-op for the already-terminal child; the root stays running.
+    with patch("runner.loops.poll_cloud_run_exec", AsyncMock(return_value="running")):
+        await loops._reconcile_once()
+    assert (await store.get_job("j_c")).status.value == "done"
 
     # 7. The full session payload reflects the whole tree + the uploaded artifact.
     full = (await client.get(f"/sessions/{sid}/full")).json()

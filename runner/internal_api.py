@@ -14,6 +14,7 @@ Security (SEV-4 + SEV-5):
 
 from __future__ import annotations
 
+import base64
 import secrets
 from dataclasses import dataclass
 
@@ -22,7 +23,15 @@ from pydantic import BaseModel, Field
 
 from infra import store
 from infra.config import settings
-from infra.schemas import EventEnvelope, EventType, Job, JobKind, JobStatus, Message
+from infra.schemas import (
+    EventEnvelope,
+    EventType,
+    Job,
+    JobKind,
+    JobStatus,
+    Message,
+    RunResult,
+)
 
 router = APIRouter(prefix="/internal", tags=["internal"])
 
@@ -55,6 +64,31 @@ def _enforce_session(caller: Caller, session_id: str) -> None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "token does not own this session")
 
 
+# ---- agent bootstrap ---------------------------------------------------
+#
+# The main agent has no shared filesystem with the runner and the user goal is never
+# baked into its container — it fetches its context here on boot (token -> session).
+# `mode` lets a future conversational flow refine the goal over turns before dispatch;
+# for now it's always "oneshot". Designed to grow into returning the conversation.
+
+@router.get("/bootstrap", include_in_schema=False)
+async def get_bootstrap(caller: Caller = Depends(require_caller)) -> dict:
+    sid = caller.session_id
+    if sid is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "bootstrap requires a session-bound token")
+    doc = await store.get_redis().json().get(store._session_key(sid))
+    if not doc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown session")
+    return {
+        "session_id": sid,
+        "root_job_id": doc.get("root_job_id"),
+        "goal": doc.get("goal", ""),
+        "mode": doc.get("mode", "oneshot"),
+        "depth": 0,
+    }
+
+
 # ---- request bodies ----------------------------------------------------
 
 class EventIn(BaseModel):
@@ -85,6 +119,24 @@ class DispatchIn(BaseModel):
     idea_id: str | None = None
     strategy: str | None = None
     created_at: str | None = None
+
+
+class ArtifactIn(BaseModel):
+    name: str
+    kind: str = "other"  # plot | checkpoint | log | other
+    b64: str             # base64-encoded bytes
+    caption: str | None = None
+
+
+class ResultIn(BaseModel):
+    job_id: str
+    session_id: str
+    status: str = "done"  # done | failed | partial
+    summary: str = ""
+    metrics: dict = Field(default_factory=dict)
+    artifacts: list[ArtifactIn] = Field(default_factory=list)
+    patch: str | None = None       # future-git seam
+    base_ref: str | None = None
 
 
 # ---- telemetry ---------------------------------------------------------
@@ -147,6 +199,48 @@ async def post_dispatch(d: DispatchIn, caller: Caller = Depends(require_caller))
         await store.release_fanout(d.parent_job_id)  # don't permanently burn the slot
         raise
     return {"queued": True}
+
+
+# ---- result (sub-agent pushes its RunResult + artifacts) ---------------
+
+_ARTIFACT_SIZE_CAP = 10 * 1024 * 1024  # 10MB/artifact (Cloud Run ~32MB request cap)
+
+
+@router.post("/result", status_code=202, include_in_schema=False)
+async def post_result(r: ResultIn, caller: Caller = Depends(require_caller)) -> dict:
+    """PR2: a sub-agent reports its result here instead of writing a shared volume.
+    Records the RunResult, uploads its (base64) artifacts to GCS, and flips job status.
+    Idempotent: the finalize hook may retry, so a second POST for an already-recorded
+    job is a no-op success."""
+    _enforce_session(caller, r.session_id)
+    job = await store.get_job(r.job_id)
+    if job is None or job.session_id != r.session_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown job")
+    if await store.get_run(r.job_id) is not None:
+        return {"recorded": True, "duplicate": True}
+
+    for a in r.artifacts:
+        try:
+            data = base64.b64decode(a.b64, validate=True)
+        except Exception:  # noqa: BLE001 — skip one bad artifact, never drop the result
+            continue
+        if not data or len(data) > _ARTIFACT_SIZE_CAP:
+            continue
+        await store.put_artifact(r.session_id, r.job_id, a.kind, data, a.name, a.caption)
+
+    status_l = (r.status or "done").lower()
+    if status_l not in ("done", "failed", "partial"):
+        status_l = "done"
+    await store.write_run(RunResult(job_id=r.job_id, status=status_l, summary=r.summary,
+                                    metrics=r.metrics, patch=r.patch, base_ref=r.base_ref))
+    await store.set_job_status(
+        r.job_id, JobStatus.failed if status_l == "failed" else JobStatus.done)
+    await store.emit_event(EventEnvelope(
+        session_id=r.session_id, job_id=r.job_id, parent_job_id=job.parent_job_id,
+        depth=job.depth, type=EventType.summary,
+        payload={"summary": r.summary[:240], "metrics": r.metrics,
+                 "reported_status": status_l}))
+    return {"recorded": True}
 
 
 # ---- child status / artifacts (main-agent polls these) -----------------

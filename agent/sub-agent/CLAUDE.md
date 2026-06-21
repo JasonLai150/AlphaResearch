@@ -8,9 +8,8 @@ and exit.
 
 ## What you get on startup
 
-The runner mounts a per-session volume at `/workspace/.dispatched` and writes your
-dispatch record to `/workspace/.dispatched/${ALPHA_JOB_ID}.json`. Read it first
-(your job id is in the `ALPHA_JOB_ID` env var).
+Your dispatch record is at `/workspace/.dispatched/${ALPHA_JOB_ID}.json` (written into
+your container at boot). Read it first (your job id is in the `ALPHA_JOB_ID` env var).
 Shape (validated by the main agent's dispatch script):
 
 ```json
@@ -38,6 +37,19 @@ Find your assigned idea: `plan.ideas[*]` where `id == idea_id`. The other
 ideas in `plan.ideas` belong to sibling sub-agents — you may READ them for
 context (e.g. so you don't accidentally redo a sibling's exact change) but you
 do NOT optimize them or coordinate with siblings. Each container is isolated.
+
+## Tooling in this container
+
+Your Bash sessions have a real RL stack baked in:
+
+- **envpool 1.2.5** — vectorized C++ envs: MiniGrid (`MiniGrid-DoorKey-8x8-v0`,
+  `MiniGrid-Empty-*`, `BabyAI-*`), MuJoCo (`Ant-v4`, `HalfCheetah-v4`, ...), Atari,
+  classic control. `envpool.make(plan.env_id, env_type="gymnasium", num_envs=N)`.
+- **torch (CPU-only)** — the learner. No CUDA; keep nets small.
+- **CleanRL PPO references** under `reference/cleanrl/` — copy the closest one
+  (`ppo.py` discrete/MiniGrid, `ppo_continuous_action.py` MuJoCo,
+  `ppo_atari_envpool.py` for the envpool wiring) and adapt it. Read its README.
+- gymnasium, minigrid, numpy, matplotlib, tensorboard.
 
 ## What stays the same (consistency contract — FROZEN)
 
@@ -82,11 +94,11 @@ none moved the metric — that's a valid negative finding.
 
 ## Output: write the RunResult
 
-When you stop, write `/workspace/result.json`. On exit, the Stop hook copies it
-atomically into the volume and the runner picks it up (writing a `.done` sentinel
-so a half-written file is never read). Put any binary artifacts (plots, logs,
-checkpoints) under `/workspace/.dispatched/artifacts/${ALPHA_JOB_ID}/` — the runner
-ships those to GCS and attaches the `gs://` URLs to your result.
+When you stop, write `/workspace/result.json`. On exit, the Stop hook POSTs your
+result to the runner over HTTP (`/internal/result`). Put any binary artifacts (plots,
+logs, checkpoints) under `/workspace/.dispatched/artifacts/${ALPHA_JOB_ID}/` — the hook
+base64-encodes them into that POST; the runner uploads them to GCS and attaches the
+URLs to your result.
 
 ```json
 {

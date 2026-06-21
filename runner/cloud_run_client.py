@@ -52,10 +52,14 @@ async def spawn_main_agent_job(session_id: str, job_id: str) -> str:
                     run_v2.EnvVar(name="ALPHA_SESSION_ID", value=session_id),
                     run_v2.EnvVar(name="ALPHA_JOB_ID", value=job_id),
                     run_v2.EnvVar(name="ALPHA_DEPTH", value="0"),
+                    run_v2.EnvVar(name="ALPHA_MODEL", value=settings.model),
                     run_v2.EnvVar(name="ALPHA_INTERNAL_TOKEN", value=token),
                     run_v2.EnvVar(
                         name="ALPHA_INTERNAL_RUNNER_URL", value=settings.internal_runner_url
                     ),
+                    # The goal is NOT injected here — the agent fetches it from
+                    # GET /internal/bootstrap (token->session), so the conversational
+                    # future can return a refined goal/transcript via the same seam.
                 ],
             )
         ],
