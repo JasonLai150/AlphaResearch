@@ -36,6 +36,8 @@ pure Redis Stream tailer.
   tree/transcript/recharts metrics/artifacts), multi-turn chat (`POST /sessions/{id}/messages`),
   session history, resume/reconnect. Optional Clerk auth (app + API, graceful keyless dev fallback).
   Local dev runs end-to-end with no cloud via `ALPHA_LOCAL_SIM` (`runner/local_sim.py`). M6 ✅.
+- **Frontend-complete pass** (`feat/frontend-complete`): toast + full error/empty/loading UX,
+  pending-timeout, responsive drawers, real ContextBar, Vitest+RTL tests, eslint/prettier, deploy docs.
 
 ## Next (milestones — see tasks.md for granular checkboxes)
 - M0 ✅ tests · M1 ✅ runner · M2 ✅ containers · M7 ✅ deploy tooling — delivered in PR #8.

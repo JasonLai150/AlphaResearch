@@ -22,13 +22,18 @@ no Redis dependency, matching tests/test_public_auth.py's stub style.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+
 import pytest
 
 import infra.store as store
 import orchestrator.api as api
 from infra.schemas import EventEnvelope, EventType
 
-pytestmark = pytest.mark.asyncio
+# pytest-asyncio runs in Mode.AUTO (see pyproject), so async tests are detected
+# automatically — no module-level asyncio mark needed (it would also wrongly tag
+# the sync _normalize_last_id param tests).
 
 
 # --- 1. API endpoint: Last-Event-ID header -> tailer start cursor ----------
@@ -105,11 +110,15 @@ class _RecorderRedis:
         self._served = False
 
     async def xread(self, streams: dict, block: int, count: int):
-        # tail_events calls xread({stream: last_id}, ...) — capture the cursor.
+        # tail_events calls xread({stream: last_id}, ...) — capture the cursor FIRST
+        # so the request is recorded even if the poll is cancelled mid-block.
         (_stream, last_id), = streams.items()
         self.requested_ids.append(last_id)
+        # Real redis xread(block=...) suspends; yield to the loop so the tailer's
+        # poll loop never starves the event loop (and stays cancellable).
+        await asyncio.sleep(0)
         if self._served:
-            # Emulate a block-timeout (empty) so the consumer can stop the loop.
+            # Emulate a block-timeout (empty) so the consumer loops again.
             return None
         self._served = True
         return [(self._stream, self._entries)]
@@ -146,17 +155,27 @@ async def test_tail_events_advances_cursor_past_yielded_entry(monkeypatch):
     rec = _RecorderRedis(stream_key, [(delivered_id, {"data": env.model_dump_json()})])
     monkeypatch.setattr(store, "get_redis", lambda: rec)
 
-    seen = []
-    async for entry_id, _env in store.tail_events(sid, "0"):
-        seen.append(entry_id)
-        if len(seen) == 1:
-            # Force one more loop iteration so we observe the NEXT xread cursor.
-            continue
-        break  # pragma: no cover (the second xread returns None and loops to a 3rd)
-
-    # First request used the start cursor; the SECOND request must use the id we just
-    # delivered, never "0" again — otherwise a reconnect/continuation would replay.
+    agen = store.tail_events(sid, "0")
+    first_id, _env = await agen.__anext__()
+    assert first_id == delivered_id
+    # First request used the start cursor "0".
     assert rec.requested_ids[0] == "0"
+
+    # Drive the tailer once more to force the NEXT xread (which the stub answers with
+    # a block-timeout), then stop. We must not wait for a second YIELD — there is no
+    # second entry — only for the second REQUEST to be recorded.
+    nxt = asyncio.ensure_future(agen.__anext__())
+    for _ in range(10):
+        await asyncio.sleep(0)
+        if len(rec.requested_ids) >= 2:
+            break
+    nxt.cancel()
+    with contextlib.suppress(asyncio.CancelledError, StopAsyncIteration):
+        await nxt
+    await agen.aclose()
+
+    # The SECOND request must use the id we just delivered, never "0" again —
+    # otherwise a reconnect/continuation would replay already-seen events.
     assert rec.requested_ids[1] == delivered_id
 
 
@@ -168,15 +187,15 @@ async def test_tail_events_no_id_defaults_to_only_new(monkeypatch):
 
     agen = store.tail_events(sid)  # default last_id
     # Pull one (empty -> None -> loops) then cancel; we only need the first request.
-    import asyncio
-
     task = asyncio.ensure_future(agen.__anext__())
-    await asyncio.sleep(0)  # let the coroutine reach its first await
+    for _ in range(10):
+        await asyncio.sleep(0)  # let the coroutine reach its first xread
+        if rec.requested_ids:
+            break
     task.cancel()
-    try:
+    with contextlib.suppress(asyncio.CancelledError, StopAsyncIteration):
         await task
-    except (asyncio.CancelledError, StopAsyncIteration):
-        pass
+    await agen.aclose()
 
     # No explicit Last-Event-ID at the store layer => "$" (only events arriving now),
     # the normalize default.
