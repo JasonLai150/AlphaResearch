@@ -8,8 +8,9 @@
 # which the Stop hook publishes into the volume (see agent/sub-agent/CLAUDE.md).
 #
 # Inside Bash sessions the agent runs real RL training, so the ML stack is
-# baked in. EnvPool ships only Linux x86_64 manylinux wheels (Python 3.8–3.12,
-# glibc) — hence python:3.12-slim-bookworm + --platform=linux/amd64.
+# baked in. EnvPool ships only Linux x86_64 manylinux wheels and its last release
+# (0.8.4) tops out at the cp311 ABI — there are NO cp312 wheels — hence
+# python:3.11-slim-bookworm + --platform=linux/amd64.
 #
 # What's in this image:
 #   - Linux + libgomp1/libstdc++6 (EnvPool .so dlopen targets) + ca-certificates
@@ -36,7 +37,7 @@
 #     "import envpool; e=envpool.make('MiniGrid-Empty-8x8-v0', env_type='gymnasium', \
 #      num_envs=64); e.reset(); print(e.step(e.action_space.sample().repeat(64))[0].shape)"
 
-FROM --platform=linux/amd64 python:3.12-slim-bookworm
+FROM --platform=linux/amd64 python:3.11-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -58,7 +59,7 @@ RUN npm install -g @anthropic-ai/claude-code@latest
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
 # ML stack baked in — the agent's Bash sessions use python3 to train, evaluate,
-# and write artifacts. envpool 0.8.4 has Linux x86_64 wheels for py 3.8–3.12.
+# and write artifacts. envpool 0.8.4 has Linux x86_64 wheels for py 3.8–3.11 only.
 # pydantic is here because /workspace/job.json mirrors ResearchPlan and the
 # agent may want to (re-)validate inputs from Bash.
 RUN uv pip install --system --no-cache \

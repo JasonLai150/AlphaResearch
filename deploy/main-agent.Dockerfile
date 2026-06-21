@@ -27,21 +27,27 @@ FROM python:3.12-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    DEBIAN_FRONTEND=noninteractive
+    DEBIAN_FRONTEND=noninteractive \
+    UV_HTTP_TIMEOUT=300
 
 # Node 22 from NodeSource (Claude Code CLI requires Node >= 18). curl + gnupg
 # are needed only to add the apt repo; purge them after to keep the image lean.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Acquire::Retries + curl --retry harden the build against flaky/congested networks
+# (apt mirrors and nodesource can drop mid-pull).
+RUN apt-get -o Acquire::Retries=8 update \
+    && apt-get -o Acquire::Retries=8 install -y --no-install-recommends \
         curl ca-certificates gnupg \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
+    && curl -fsSL --retry 8 --retry-delay 2 --retry-connrefused \
+        https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get -o Acquire::Retries=8 install -y --no-install-recommends nodejs \
     && apt-get purge -y --auto-remove curl gnupg \
     && rm -rf /var/lib/apt/lists/*
 
 # Claude Code CLI = the actual entrypoint. `@latest` is intentional during P0;
 # pin once we have a known-good version (see the bundled-CLI version in
 # claude-agent-sdk for a reference: 2.1.x at the time of writing).
-RUN npm install -g @anthropic-ai/claude-code@latest
+RUN npm install -g --fetch-retries=8 --fetch-retry-mintimeout=20000 \
+        @anthropic-ai/claude-code@latest
 
 # Single Python dep: pydantic. The dispatch script and PreToolUse hook both
 # import scripts/schemas.py which uses pydantic — that's it.
