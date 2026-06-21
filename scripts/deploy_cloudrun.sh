@@ -6,15 +6,21 @@
 # runner triggers per chat. Sub-agents run on Modal (deploy separately via
 # scripts/deploy_modal.sh + `modal deploy infra/modal_app.py`).
 #
+# PREREQ: run scripts/gcp_bootstrap.sh ONCE first (enables APIs, creates the AR repo,
+# bucket, service accounts + IAM, and secrets). This script assumes that's done.
+#
 # Safe to re-run. Reads PROJECT/REGION/... from env or uses the defaults below.
 set -euo pipefail
 
 PROJECT="${PROJECT:-alpharesearch-500100}"
 REGION="${REGION:-us-central1}"
 REPO="${REPO:-alpha}"
-BUCKET="${BUCKET:-alpharesearch-500100-artifacts}"
+BUCKET="${BUCKET:-${PROJECT}-artifacts}"
 SERVICE="${SERVICE:-alpha-api}"
 AGENT_JOB="${AGENT_JOB:-alpha-main-agent}"
+# Runtime service accounts created by gcp_bootstrap.sh.
+ORCH_SA="${ORCH_SA:-alpha-orchestrator@${PROJECT}.iam.gserviceaccount.com}"
+AGENT_SA="${AGENT_SA:-alpha-main-agent@${PROJECT}.iam.gserviceaccount.com}"
 TAG="${TAG:-v$(date +%Y%m%d-%H%M%S)}"
 REGISTRY="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}"
 IMAGE_API="${REGISTRY}/api:${TAG}"
@@ -55,6 +61,7 @@ echo "==> Deploy Cloud Run service (orchestrator: API + runner)"
 # it SAFE to raise later — only the lease holder runs the loops, so a rolling-deploy
 # overlap never double-spawns.
 gcloud run deploy "${SERVICE}" --image="${IMAGE_API}" --region="${REGION}" --project="${PROJECT}" \
+    --service-account="${ORCH_SA}" \
     --allow-unauthenticated --min-instances=1 --max-instances=1 --no-cpu-throttling \
     --memory=1Gi --cpu=1 --port=8080 \
     --set-secrets="ANTHROPIC_API_KEY=anthropic-api-key:latest,\
@@ -79,6 +86,7 @@ gcloud run jobs describe "${AGENT_JOB}" --region="${REGION}" --project="${PROJEC
     >/dev/null 2>&1 && CMD=update || CMD=create
 gcloud run jobs "${CMD}" "${AGENT_JOB}" \
     --image="${IMAGE_AGENT}" --region="${REGION}" --project="${PROJECT}" \
+    --service-account="${AGENT_SA}" \
     --task-timeout=4h --max-retries=0 --memory=2Gi --cpu=2 \
     --set-secrets="ANTHROPIC_API_KEY=anthropic-api-key:latest" \
     --set-env-vars="ALPHA_INTERNAL_RUNNER_URL=${URL}"
