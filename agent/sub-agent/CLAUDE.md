@@ -39,6 +39,19 @@ ideas in `plan.ideas` belong to sibling sub-agents — you may READ them for
 context (e.g. so you don't accidentally redo a sibling's exact change) but you
 do NOT optimize them or coordinate with siblings. Each container is isolated.
 
+## Tooling in this container
+
+Your Bash sessions have a real RL stack baked in:
+
+- **envpool 1.2.5** — vectorized C++ envs: MiniGrid (`MiniGrid-DoorKey-8x8-v0`,
+  `MiniGrid-Empty-*`, `BabyAI-*`), MuJoCo (`Ant-v4`, `HalfCheetah-v4`, ...), Atari,
+  classic control. `envpool.make(plan.env_id, env_type="gymnasium", num_envs=N)`.
+- **torch (CPU-only)** — the learner. No CUDA; keep nets small.
+- **CleanRL PPO references** under `reference/cleanrl/` — copy the closest one
+  (`ppo.py` discrete/MiniGrid, `ppo_continuous_action.py` MuJoCo,
+  `ppo_atari_envpool.py` for the envpool wiring) and adapt it. Read its README.
+- gymnasium, minigrid, numpy, matplotlib, tensorboard.
+
 ## What stays the same (consistency contract — FROZEN)
 
 You may NOT modify, override, or work around:

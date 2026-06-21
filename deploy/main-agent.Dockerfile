@@ -55,6 +55,15 @@ COPY agent/main-agent/ ./
 # missing-parent.
 RUN mkdir -p ./.dispatched ./meta-planning
 
+# Claude Code refuses --dangerously-skip-permissions when running as root, so run
+# as a non-root user. uid 1000 keeps a bind-mounted /workspace (e.g. .dispatched)
+# writable on Linux hosts; the npm global install lives in world-readable
+# /usr/local, so `claude` is still on PATH.
+RUN useradd --create-home --uid 1000 claude \
+    && chown -R claude:claude /workspace
+USER claude
+ENV HOME=/home/claude
+
 # `claude --dangerously-skip-permissions` is the canonical entrypoint per
 # agent/main-agent/CLAUDE.md. ANTHROPIC_API_KEY MUST be provided at run time.
 ENTRYPOINT ["claude", "--dangerously-skip-permissions"]
