@@ -131,9 +131,6 @@ def sub_agent(
     dispatch_record: str = "",
     traceparent: str = "",
     baggage: str = "",
-    wandb_entity: str = "",
-    browserbase_context_id: str = "",
-    browserbase_project_id: str = "",
 ) -> None:
     """Boot the Claude Code sub-agent.
 
@@ -178,19 +175,6 @@ def sub_agent(
     # Static OTEL config (CLAUDE_CODE_ENABLE_TELEMETRY, OTEL_EXPORTER_OTLP_*, content
     # flags) arrives via the alpha-secrets Modal secret (see scripts/deploy_modal.sh),
     # not here. traceparent/baggage above are the per-exec W3C trace context (Layer A).
-
-    # Intentionally NOT Sentry-instrumented: sub_image is built from deploy/sub-agent.Dockerfile
-    # and does not carry infra/. Visibility comes via runner/internal-API spans.
-
-    # wandb run identity + Browserbase context for deterministic per-run screenshots
-    # (scripts/capture_wandb.py). WANDB_PROJECT defaults to alpha-<session_id> in
-    # scripts/wandb_run.py. BROWSERBASE_API_KEY + WANDB_API_KEY come from alpha-secrets.
-    if wandb_entity:
-        env["WANDB_ENTITY"] = wandb_entity
-    if browserbase_context_id:
-        env["BROWSERBASE_CONTEXT_ID"] = browserbase_context_id
-    if browserbase_project_id:
-        env["BROWSERBASE_PROJECT_ID"] = browserbase_project_id
 
     # Same headless launcher the sub-agent Dockerfile ENTRYPOINT uses (Modal overrides
     # the image entrypoint, so we invoke it explicitly): builds the prompt from the

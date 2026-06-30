@@ -95,9 +95,7 @@ Change only what your idea is about — everything else stays at the frozen base
 2. Run `scripts/train_ppo.py` **once** (command above). It trains baseline + intervention
    and writes `result.json` + `metrics.json` + `training_curves.png` into
    `/workspace/.dispatched/artifacts/${ALPHA_JOB_ID}/`.
-3. *(Optional, best-effort)* `python3 scripts/capture_wandb.py` to add a live wandb
-   screenshot artifact — the trainer already logged the run. Skip cleanly if it fails.
-4. Read `result.json` and confirm the metrics + `delta_vs_baseline` look sane. If the
+3. Read `result.json` and confirm the metrics + `delta_vs_baseline` look sane. If the
    trainer reported `status:"failed"` (e.g. a malformed `--intervention`), read its
    summary, fix the knobs, and re-run **once**. Don't loop.
 
@@ -107,42 +105,12 @@ for you in the right shape (status/summary/metrics/validated/artifacts) — you 
 hand-write `result.json`. A negative result (`delta ≤ 0`) is a fine, honest outcome;
 report it as-is. Lying about results poisons the whole session.
 
-## Weights & Biases: screenshot YOUR run
+## Evidence: metrics + plot
 
-`train_ppo.py` already logs your training to wandb with a **deterministic run id = your
-job id** (via `scripts/wandb_run.py::init_wandb`), so the run is uniquely yours — a
-screenshot can never grab a sibling's graph, and you do NOT init wandb yourself.
-
-After the trainer finishes, capture the live run (one Bash call, no URL needed — it
-derives YOUR run URL from the job id):
-
-```bash
-python3 scripts/capture_wandb.py
-```
-
-It drops `wandb_run.png` (+ a best-effort `wandb_summary.json` from the Browserbase smart
-agent) into `/workspace/.dispatched/artifacts/${ALPHA_JOB_ID}/`, which the Stop hook
-base64-POSTs to `/internal/result` → GCS → back to the main agent. Run it AFTER the
-trainer (an empty run page has no charts).
-
-## If wandb or the Browserbase agent doesn't work — fall back to code + PNGs
-
-These are conveniences, not requirements. If wandb logging fails (missing
-`WANDB_API_KEY`, auth/network error) or the Browserbase screenshot agent fails
-(missing `BROWSERBASE_*`, Stagehand/agent error, login expired), **do NOT block,
-retry forever, or fail your run over it.** Fall back to the basics:
-
-- **Plot in code.** Generate your figures with matplotlib and save them straight to
-  `/workspace/.dispatched/artifacts/${ALPHA_JOB_ID}/*.png` — the Stop hook ships any
-  files there back exactly like a wandb screenshot would.
-- **Metrics to files.** Put the numbers in `result.json` (and optionally a
-  `metrics.json` / `*.csv` artifact). That is the source of truth, not the dashboard.
-- **Keep it simple.** Prefer basic, standard implementations over anything that
-  depends on a flaky external service. A working local plot beats a broken live view.
-
-Your finding — real numbers in `result.json` plus a plot PNG in the artifacts dir —
-is what matters. The live wandb dashboard and the smart screenshot are nice-to-haves
-layered on top; never let them be the reason a run produces nothing.
+`train_ppo.py` writes everything the main agent needs straight into the artifacts dir:
+real numbers in `result.json` (and `metrics.json`), plus `training_curves.png`. The Stop
+hook base64-POSTs all of it to the runner (`/internal/result`) → GCS → back to the main
+agent. That is the source of truth — there is no external dashboard to capture.
 
 ## Hard rules
 

@@ -198,20 +198,5 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("OTEL_EXPORTER_OTLP_HEADERS"),
     )
 
-    # ---- wandb + Browserbase (sub-agent screenshots of live wandb runs) ----
-    # Non-secret identifiers injected into each sub-agent at spawn. The secrets
-    # (BROWSERBASE_API_KEY, WANDB_API_KEY) ride in the Modal `alpha-secrets` secret.
-    wandb_entity: str = Field(
-        default="", validation_alias=AliasChoices("ALPHA_WANDB_ENTITY", "WANDB_ENTITY"),
-    )
-    browserbase_context_id: str = Field(
-        default="",
-        validation_alias=AliasChoices("ALPHA_BROWSERBASE_CONTEXT_ID", "BROWSERBASE_CONTEXT_ID"),
-    )
-    browserbase_project_id: str = Field(
-        default="",
-        validation_alias=AliasChoices("ALPHA_BROWSERBASE_PROJECT_ID", "BROWSERBASE_PROJECT_ID"),
-    )
-
 
 settings = Settings()
