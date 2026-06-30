@@ -45,9 +45,9 @@ bash scripts/deploy_cloudrun.sh
 > to *both* `runner/modal_client.py` (deployed via Cloud Run) and `infra/modal_app.py`
 > (deployed via Modal), but only Cloud Run was redeployed. **Cross-boundary change ⇒ deploy both.**
 
-Optional (only when sub-agent telemetry/secrets changed): refresh the Modal secret
+Optional (only when sub-agent secrets changed): refresh the Modal secret
 before `modal deploy` — `bash scripts/deploy_modal.sh` (re-bundles `ANTHROPIC_API_KEY`,
-`REDIS_URL`, GCS key, and the SENTRY/OTEL/wandb/Browserbase vars into `alpha-secrets`).
+`REDIS_URL`, and the GCS key into `alpha-secrets`).
 Not needed just to fix a code/signature skew.
 
 ## 2. Run a session — the ONLY correct trigger

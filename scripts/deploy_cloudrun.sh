@@ -12,7 +12,7 @@
 # Safe to re-run. Reads PROJECT/REGION/... from env or uses the defaults below.
 set -euo pipefail
 
-# Pull non-secret identifiers (OTEL_*) from .env when present, same as
+# Source .env when present so PROJECT/REGION/etc. overrides apply, same as
 # scripts/deploy_modal.sh. Harmless for the GCP values below — the script sets/derives
 # those explicitly. Skipped in CI where .env is absent.
 if [ -f .env ]; then set -a; source .env; set +a; fi
@@ -50,7 +50,7 @@ echo "==> Check required secrets exist (create once, by hand)"
 # modal-token-{id,secret}: the runner spawns sub-agent Modal Functions from Cloud Run,
 # so it needs Modal API creds (no ~/.modal.toml in the container). Mint with
 # `modal token new`, then push the values from ~/.modal.toml into these secrets.
-for s in anthropic-api-key alpha-redis-url gcs-sa-key modal-token-id modal-token-secret sentry-dsn; do
+for s in anthropic-api-key alpha-redis-url gcs-sa-key modal-token-id modal-token-secret; do
     gcloud secrets describe "${s}" --project="${PROJECT}" >/dev/null 2>&1 || {
         echo "ERROR: secret '${s}' missing. Create it: gcloud secrets create ${s} --data-file=-"
         exit 1
@@ -93,17 +93,6 @@ echo "==> Deploy Cloud Run service (orchestrator: API + runner)"
 # max-instances stays at 1 for the MVP; the runner's Redis leader lease (SEV-2) makes
 # it SAFE to raise later — only the lease holder runs the loops, so a rolling-deploy
 # overlap never double-spawns.
-#
-# Agent OTEL (Layer A): when OTEL_EXPORTER_OTLP_ENDPOINT is exported, give the RUNNER
-# the OTEL settings so it injects Claude Code's native-telemetry env vars into each
-# agent execution at spawn time (runner/cloud_run_client.py). The runner — not the Job
-# spec — is what reads settings.agent_otel_enabled, so the config belongs on the service.
-OTEL_ENV_VARS=""
-if [ -n "${OTEL_EXPORTER_OTLP_ENDPOINT:-}" ]; then
-  OTEL_ENV_VARS=",ALPHA_AGENT_OTEL_ENABLED=true"
-  OTEL_ENV_VARS="${OTEL_ENV_VARS},OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT}"
-fi
-
 gcloud run deploy "${SERVICE}" --image="${IMAGE_API}" --region="${REGION}" --project="${PROJECT}" \
     --service-account="${ORCH_SA}" \
     --allow-unauthenticated --min-instances=1 --max-instances=1 --no-cpu-throttling \
@@ -112,19 +101,10 @@ gcloud run deploy "${SERVICE}" --image="${IMAGE_API}" --region="${REGION}" --pro
 ALPHA_REDIS_URL=alpha-redis-url:latest,\
 GOOGLE_APPLICATION_CREDENTIALS_B64=gcs-sa-key:latest,\
 MODAL_TOKEN_ID=modal-token-id:latest,\
-MODAL_TOKEN_SECRET=modal-token-secret:latest,\
-SENTRY_DSN=sentry-dsn:latest" \
+MODAL_TOKEN_SECRET=modal-token-secret:latest" \
     --set-env-vars="ALPHA_GCS_BUCKET=${BUCKET},ALPHA_MODAL_APP_NAME=alpharesearch,\
 ALPHA_GCP_PROJECT=${PROJECT},ALPHA_GCP_REGION=${REGION},ALPHA_MAIN_AGENT_JOB_NAME=${AGENT_JOB},\
-ALPHA_RUNNER_ENABLED=true,SENTRY_ENVIRONMENT=cloud,SENTRY_TRACES_SAMPLE_RATE=1.0${OTEL_ENV_VARS}"
-
-# OTEL_EXPORTER_OTLP_HEADERS carries the Sentry ingest key (e.g. "sentry-key=<public>").
-# Its value contains '=', so set it on its own with a custom delimiter to avoid the
-# comma/'=' parsing in --set-env-vars above.
-if [ -n "${OTEL_EXPORTER_OTLP_HEADERS:-}" ]; then
-  gcloud run services update "${SERVICE}" --region="${REGION}" --project="${PROJECT}" \
-      --update-env-vars="^@^OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS}"
-fi
+ALPHA_RUNNER_ENABLED=true"
 
 URL=$(gcloud run services describe "${SERVICE}" --region="${REGION}" --project="${PROJECT}" \
     --format='value(status.url)')
