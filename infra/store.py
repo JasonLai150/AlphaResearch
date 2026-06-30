@@ -17,10 +17,8 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import redis.asyncio as redis
-import sentry_sdk
 
 from infra.config import settings
-from infra.observability import scrub
 from infra.schemas import (
     ArtifactRef,
     EventEnvelope,
@@ -346,19 +344,6 @@ async def release_fanout(parent_job_id: str) -> None:
 
 async def emit_event(event: EventEnvelope) -> str:
     """XADD to the session event Stream. Returns the (monotonic) entry id."""
-    sentry_sdk.add_breadcrumb(
-        category="alpha.event",
-        message=f"{event.type.value} job={event.job_id} depth={event.depth}",
-        data=scrub({
-            "session_id": event.session_id,
-            "job_id": event.job_id,
-            "parent_job_id": event.parent_job_id,
-            "type": event.type.value,
-            "depth": event.depth,
-            "payload": event.payload,
-        }),
-        level="info",
-    )
     # NOTE: the stream is intentionally NOT trimmed here. The frontend rebuilds
     # ALL view state by replaying this stream from "0" (see web/hooks/use-session.ts),
     # so a MAXLEN trim would silently drop chat/token history on reconnect. Console

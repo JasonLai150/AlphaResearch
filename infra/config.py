@@ -193,35 +193,5 @@ class Settings(BaseSettings):
             )
         return self
 
-    # ---- Agent OTEL telemetry (Layer A: inject into agent subprocess env) ------
-    # Opt-in: set agent_otel_enabled=true AND otel_otlp_endpoint to activate.
-    agent_otel_enabled: bool = Field(
-        default=False,
-        validation_alias=AliasChoices("ALPHA_AGENT_OTEL_ENABLED"),
-    )
-    otel_otlp_endpoint: str = Field(
-        default="",
-        validation_alias=AliasChoices("OTEL_EXPORTER_OTLP_ENDPOINT"),
-    )
-    otel_otlp_headers: str = Field(
-        default="",
-        validation_alias=AliasChoices("OTEL_EXPORTER_OTLP_HEADERS"),
-    )
-
-    # ---- wandb + Browserbase (sub-agent screenshots of live wandb runs) ----
-    # Non-secret identifiers injected into each sub-agent at spawn. The secrets
-    # (BROWSERBASE_API_KEY, WANDB_API_KEY) ride in the Modal `alpha-secrets` secret.
-    wandb_entity: str = Field(
-        default="", validation_alias=AliasChoices("ALPHA_WANDB_ENTITY", "WANDB_ENTITY"),
-    )
-    browserbase_context_id: str = Field(
-        default="",
-        validation_alias=AliasChoices("ALPHA_BROWSERBASE_CONTEXT_ID", "BROWSERBASE_CONTEXT_ID"),
-    )
-    browserbase_project_id: str = Field(
-        default="",
-        validation_alias=AliasChoices("ALPHA_BROWSERBASE_PROJECT_ID", "BROWSERBASE_PROJECT_ID"),
-    )
-
 
 settings = Settings()

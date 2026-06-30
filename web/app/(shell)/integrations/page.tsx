@@ -4,8 +4,6 @@ import {
   Box,
   Cloud,
   Database,
-  Globe,
-  LineChart,
   RefreshCw,
   Server,
   ShieldCheck,
@@ -102,8 +100,6 @@ export default function IntegrationsPage() {
     { icon: Box, name: "Modal", purpose: "Sub-agent sandboxes", tone: "muted", status: "Managed on backend" },
     { icon: Cloud, name: "Google Cloud Storage", purpose: "Artifacts", tone: "muted", status: "Managed on backend" },
     { icon: Database, name: "Redis", purpose: "State · event bus · queue", tone: "muted", status: "Managed on backend" },
-    { icon: LineChart, name: "Weights & Biases", purpose: "Experiment tracking", tone: "muted", status: "Managed on backend" },
-    { icon: Globe, name: "Browserbase", purpose: "Agent web browsing", tone: "muted", status: "Managed on backend" },
   ];
 
   return (

@@ -164,10 +164,8 @@ def build_agent(obs_dim: int, n_actions: int, hidden: int):
 
 # ---- one training run --------------------------------------------------------
 
-def train_run(env_id: str, total_steps: int, num_envs: int, seed: int, hp: dict,
-              log_cb=None) -> dict:
-    """Train once with hyperparameters hp; return {curve:[(step,ret)], final_metric, sps}.
-    log_cb(step, return) is called each iteration (used to stream to wandb)."""
+def train_run(env_id: str, total_steps: int, num_envs: int, seed: int, hp: dict) -> dict:
+    """Train once with hyperparameters hp; return {curve:[(step,ret)], final_metric, sps}."""
     import torch
     import torch.nn as nn
     import torch.optim as optim
@@ -285,8 +283,6 @@ def train_run(env_id: str, total_steps: int, num_envs: int, seed: int, hp: dict,
 
         recent = float(np.mean(completed[-50:])) if completed else 0.0
         curve.append((global_step, round(recent, 4)))
-        if log_cb is not None:
-            log_cb(global_step, recent)
 
     try:
         envs.close()
@@ -338,28 +334,6 @@ def _plot(adir: Path, base: dict, interv: dict, metric: str) -> str | None:
     return str(out)
 
 
-def _wandb_init(args):
-    """Best-effort: start THIS sub-agent's wandb run (deterministic id from job id) so
-    capture_wandb.py can screenshot it. Never fatal — returns a logger or None."""
-    try:
-        import sys
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        from wandb_run import init_wandb
-        init_wandb(config={"env": args.env, "total_steps": args.total_steps,
-                           "num_envs": args.num_envs, "intervention": args.intervention})
-
-        def _log(step, ret):
-            try:
-                import wandb
-                wandb.log({"charts/episodic_return": ret}, step=step)
-            except Exception:  # noqa: BLE001
-                pass
-        return _log
-    except Exception as e:  # noqa: BLE001
-        print(f"[train_ppo] wandb disabled ({type(e).__name__})")
-        return None
-
-
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--env", default="MiniGrid-Empty-5x5-v0")
@@ -378,21 +352,14 @@ def main() -> int:
     print(f"[train_ppo] env={a.env} steps={a.total_steps} num_envs={a.num_envs} "
           f"intervention={overrides or '(none)'}")
 
-    log_cb = _wandb_init(a)  # the sub-agent's wandb run (best-effort) -> capture_wandb.py
     t0 = time.time()
     if overrides:
         base = train_run(a.env, a.total_steps, a.num_envs, a.seed, baseline_hp)
-        interv = train_run(a.env, a.total_steps, a.num_envs, a.seed, interv_hp, log_cb=log_cb)
+        interv = train_run(a.env, a.total_steps, a.num_envs, a.seed, interv_hp)
     else:
-        base = train_run(a.env, a.total_steps, a.num_envs, a.seed, baseline_hp, log_cb=log_cb)
+        base = train_run(a.env, a.total_steps, a.num_envs, a.seed, baseline_hp)
         interv = base
     wall = int(time.time() - t0)
-    try:
-        import wandb
-        if wandb.run is not None:
-            wandb.finish()
-    except Exception:  # noqa: BLE001
-        pass
 
     metric = a.target_metric
     delta = round(interv["final_metric"] - base["final_metric"], 4)

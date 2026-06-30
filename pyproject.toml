@@ -19,7 +19,6 @@ dependencies = [
     "google-cloud-run>=0.10",
     "google-cloud-logging>=3.11",
     "orjson>=3.10",
-    "sentry-sdk[fastapi]>=2.35",
 ]
 
 [project.optional-dependencies]

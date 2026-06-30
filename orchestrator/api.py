@@ -22,12 +22,9 @@ from sse_starlette.sse import EventSourceResponse
 
 from infra import store
 from infra.config import settings
-from infra.observability import init_observability
 from infra.schemas import EventEnvelope, EventType, Job, JobKind, JobStatus, Message
 from orchestrator.auth import require_session_access, verified_user_id
 from runner.internal_api import router as internal_router
-
-init_observability("api")
 
 
 @asynccontextmanager
