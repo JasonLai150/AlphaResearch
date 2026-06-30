@@ -12,10 +12,14 @@ export function TreePanel({
   tree,
   subagents,
   artifacts,
+  onExpand,
+  onSelectAgent,
 }: {
   tree: TreeNode | null;
   subagents: Subagent[];
   artifacts: WireArtifact[];
+  onExpand?: () => void;
+  onSelectAgent?: (id: string) => void;
 }) {
   return (
     <aside className="flex h-full min-h-0 w-full flex-col border-l border-hairline bg-canvas">
@@ -28,20 +32,37 @@ export function TreePanel({
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-6 p-4">
-          <div className="flex min-h-[120px] items-center justify-center rounded-lg border border-hairline bg-canvas-card/40 px-3 py-4">
-            {tree ? (
+          {tree && onExpand ? (
+            <button
+              type="button"
+              onClick={onExpand}
+              aria-label="Expand agent graph"
+              className="group flex min-h-[120px] w-full items-center justify-center rounded-lg border border-hairline bg-canvas-card/40 px-3 py-4 transition-colors hover:border-canvas-mid focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
               <AgentTree root={tree} />
-            ) : (
-              <span className="text-[12px] text-mute">No agents yet.</span>
-            )}
-          </div>
+            </button>
+          ) : (
+            <div className="flex min-h-[120px] items-center justify-center rounded-lg border border-hairline bg-canvas-card/40 px-3 py-4">
+              {tree ? (
+                <AgentTree root={tree} />
+              ) : (
+                <span className="text-[12px] text-mute">No agents yet.</span>
+              )}
+            </div>
+          )}
 
           <div className="flex flex-col gap-2.5">
             <Eyebrow as="h2">Subagents</Eyebrow>
             {subagents.length ? (
               <div className="flex flex-col gap-2">
                 {subagents.map((a) => (
-                  <SubagentCard key={a.id} agent={a} />
+                  <SubagentCard
+                    key={a.id}
+                    agent={a}
+                    onSelect={
+                      onSelectAgent ? () => onSelectAgent(a.id) : undefined
+                    }
+                  />
                 ))}
               </div>
             ) : (

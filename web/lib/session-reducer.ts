@@ -1,7 +1,12 @@
 import type {
   AgentStatus,
+  ConsoleLine,
   EventEnvelope,
+  GraphLink,
+  GraphNode,
   JobView,
+  LoopStatus,
+  LoopView,
   SessionState,
   Subagent,
   TranscriptItem,
@@ -34,6 +39,8 @@ export function emptyState(
 // the UI never notices; oldest entries are dropped first.
 const MAX_TRANSCRIPT = 2000;
 const MAX_REWARDS = 1000;
+/** Per-job raw console buffer cap (oldest lines dropped first). */
+export const MAX_CONSOLE = 1000;
 
 /*
   Append a transcript item with a collision-free id. The id derives from a
@@ -51,6 +58,28 @@ function appendTranscript(
   const transcript =
     next.length > MAX_TRANSCRIPT ? next.slice(next.length - MAX_TRANSCRIPT) : next;
   return { ...prev, transcript, seq: seq + 1 };
+}
+
+/*
+  Stamp a job's live "current line" (for the graph node). Updates ONLY an
+  existing job — never creates one — so the invariant "token/log events never
+  create jobs" holds. Deterministic under replay (value = latest content). The
+  line is tail-trimmed so a long stream can't bloat state.
+*/
+function stampJobLine(
+  state: SessionState,
+  id: string,
+  line: string,
+  streaming: boolean
+): SessionState {
+  if (!id || !line.trim()) return state;
+  const job = state.jobs[id];
+  if (!job) return state;
+  const trimmed = line.length > 160 ? line.slice(line.length - 160) : line;
+  return {
+    ...state,
+    jobs: { ...state.jobs, [id]: { ...job, lastLine: trimmed, streaming } },
+  };
 }
 
 const STATUS_MAP: Record<string, AgentStatus> = {
@@ -83,11 +112,12 @@ export function applyEvent(prev: SessionState, env: EventEnvelope): SessionState
           : role === "tool_use" || role === "tool_result"
             ? "tool"
             : "assistant";
-    return appendTranscript(prev, {
+    const appended = appendTranscript(prev, {
       role: mapped,
       text: String(p.content ?? ""),
       toolName: (p.tool_name as string) ?? undefined,
     });
+    return stampJobLine(appended, env.job_id, String(p.content ?? ""), false);
   }
 
   // Streaming assistant text: coalesce token deltas into one growing item,
@@ -99,21 +129,48 @@ export function applyEvent(prev: SessionState, env: EventEnvelope): SessionState
     const delta = String(p.delta ?? "");
     const final = Boolean(p.final);
     const i = prev.transcript.findIndex((t) => t.msgId === msgId);
+    let next: SessionState;
+    let line: string;
     if (i >= 0) {
       const transcript = prev.transcript.slice();
-      transcript[i] = {
-        ...transcript[i],
-        text: transcript[i].text + delta,
+      line = transcript[i].text + delta;
+      transcript[i] = { ...transcript[i], text: line, streaming: !final };
+      next = { ...prev, transcript };
+    } else {
+      line = delta;
+      next = appendTranscript(prev, {
+        role: "assistant",
+        text: delta,
+        msgId,
         streaming: !final,
-      };
-      return { ...prev, transcript };
+      });
     }
-    return appendTranscript(prev, {
-      role: "assistant",
-      text: delta,
-      msgId,
-      streaming: !final,
-    });
+    return stampJobLine(next, env.job_id, line, !final);
+  }
+
+  // Raw console (stdout/stderr) rides the bus as `console` events. It goes into
+  // a per-job buffer — NOT the chat transcript — so the operational console has
+  // its own view. Like token/log, it only ever updates an EXISTING job (the
+  // job's spawn/status precedes its console in the totally-ordered stream), so a
+  // console line never creates a phantom job.
+  if (env.type === "console") {
+    const id = env.job_id;
+    const job = id ? prev.jobs[id] : undefined;
+    if (!job) return prev;
+    const seq = prev.seq;
+    const entry: ConsoleLine = {
+      id: `c${seq}`,
+      stream: p.stream === "stdout" ? "stdout" : "stderr",
+      line: String(p.line ?? ""),
+    };
+    const next = [...(job.console ?? []), entry];
+    const buf =
+      next.length > MAX_CONSOLE ? next.slice(next.length - MAX_CONSOLE) : next;
+    return {
+      ...prev,
+      seq: seq + 1,
+      jobs: { ...prev.jobs, [id]: { ...job, console: buf } },
+    };
   }
 
   // An `error` event surfaces as a system transcript line (#13).
@@ -122,6 +179,38 @@ export function applyEvent(prev: SessionState, env: EventEnvelope): SessionState
       role: "system",
       text: String(p.reason ?? p.message ?? "agent error"),
     });
+  }
+
+  // Autonomous loop lifecycle rides on `status` events carrying a `phase`
+  // (round_started / loop_stopped). Fold it into state.loop and return early so a
+  // round-boundary event never registers a phantom job node. Append-only fields +
+  // last-write-wins => idempotent under replay-from-0 and reconnect-resume.
+  if (
+    env.type === "status" &&
+    (p.phase === "round_started" || p.phase === "loop_stopped")
+  ) {
+    const prevLoop = prev.loop;
+    const loop: LoopView = {
+      round:
+        typeof p.round_index === "number" ? p.round_index : prevLoop?.round ?? 1,
+      maxRounds:
+        typeof p.max_rounds === "number"
+          ? p.max_rounds
+          : prevLoop?.maxRounds ?? 0,
+      goalMetric:
+        typeof p.goal_metric === "number"
+          ? p.goal_metric
+          : prevLoop?.goalMetric ?? null,
+      status:
+        p.phase === "loop_stopped"
+          ? ((p.status as LoopStatus) ?? "completed")
+          : "running",
+      reason:
+        p.phase === "loop_stopped"
+          ? (p.reason as string) ?? prevLoop?.reason
+          : prevLoop?.reason,
+    };
+    return { ...prev, loop };
   }
 
   // Backend / mode may arrive on spawn or status payloads (#27); capture them.
@@ -185,6 +274,8 @@ export function applyEvent(prev: SessionState, env: EventEnvelope): SessionState
     }
     case "summary":
       if (p.summary != null) job.summary = String(p.summary);
+      if (p.summary != null) job.lastLine = String(p.summary);
+      job.streaming = false;
       if (p.metrics && typeof p.metrics.final_reward === "number") {
         job.lastReward = p.metrics.final_reward;
       } else if (
@@ -272,10 +363,52 @@ export function artifactsOf(state: SessionState): WireArtifact[] {
   return state.order.flatMap((id) => state.jobs[id].artifacts);
 }
 
+/** Raw console (stdout/stderr) lines for one job, oldest→newest. */
+export function consoleOf(state: SessionState, jobId: string | null): ConsoleLine[] {
+  return (jobId && state.jobs[jobId]?.console) || [];
+}
+
 /** True while any job is still active (running/queued/pending). */
 export function isRunning(state: SessionState): boolean {
   return state.order.some((id) => {
     const s = state.jobs[id].status;
     return s === "running" || s === "queued" || s === "pending";
   });
+}
+
+export function graphOf(state: SessionState): {
+  nodes: GraphNode[];
+  links: GraphLink[];
+} {
+  if (!state.rootId) return { nodes: [], links: [] };
+  let childN = 0;
+  const nodes: GraphNode[] = state.order.map((id) => {
+    const j = state.jobs[id];
+    const isRoot = id === state.rootId;
+    let label: string;
+    if (isRoot) label = "Main agent";
+    else if (j.parentId === state.rootId) label = letter(childN++);
+    else label = (j.goal || j.kind).slice(0, 16);
+    return {
+      id,
+      label,
+      kind: j.goal || (j.kind === "experiment" ? "Experiment" : "Research"),
+      status: j.status,
+      depth: j.depth,
+      isRoot,
+      reward: j.lastReward,
+      rewards: j.rewards,
+      lastLine: j.lastLine,
+      streaming: j.streaming,
+    };
+  });
+  const links: GraphLink[] = state.order
+    .map((id) => state.jobs[id])
+    .filter((j) => j.parentId != null && state.jobs[j.parentId])
+    .map((j) => ({
+      source: j.parentId as string,
+      target: j.id,
+      active: j.status === "running",
+    }));
+  return { nodes, links };
 }

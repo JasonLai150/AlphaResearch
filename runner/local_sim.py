@@ -16,14 +16,16 @@ from __future__ import annotations
 import asyncio
 import re
 
-from infra import store
+from infra import loop_policy, store
 from infra.schemas import (
     EventEnvelope,
     EventType,
     Job,
     JobKind,
     JobStatus,
+    LoopStatus,
     Message,
+    RoundRecord,
     RunResult,
 )
 
@@ -46,6 +48,13 @@ async def _emit(sid, jid, depth, type_, payload, parent=None) -> None:
             payload=payload,
         )
     )
+
+
+async def _console(sid, jid, depth, stream, line, parent=None) -> None:
+    """Emit one raw-console line (mirrors what console_relay does for a real
+    agent's stdout/stderr) so the local UI can exercise the console view."""
+    await _emit(sid, jid, depth, EventType.console,
+                {"stream": stream, "line": line}, parent=parent)
 
 
 async def _msg(sid, jid, role, content) -> None:
@@ -146,6 +155,13 @@ async def run_local_sim_session(sid: str) -> None:
     await asyncio.sleep(0.4)
     await store.mark_job_running(root, "local-sim", "local")
     await _emit(sid, root, 0, EventType.status, {"status": "running", "note": "planning"})
+    # Raw console (what used to only reach the Cloud Run log) for the console view.
+    for line in (
+        "[claude] booting research director (model=sonnet)",
+        "[claude] read CLAUDE.md + session_state.md — cold start",
+        "[research] baselines: PPO MiniGrid-DoorKey-8x8 plateau ≈ 0.40",
+    ):
+        await _console(sid, root, 0, "stderr", line)
     await _msg(
         sid, root, "assistant",
         "Scoped the goal and read the current PPO config. The plateau lines up with "
@@ -198,6 +214,13 @@ async def run_local_sim_session(sid: str) -> None:
             await _emit(sid, child[name], 1, EventType.metric,
                         {"step": step, "reward": reward, "series": "eval/reward"},
                         parent=root)
+            # Per-subagent training console (stdout of train_ppo.py in real runs).
+            await _console(
+                sid, child[name], 1, "stdout",
+                f"step={step:>6} eval/reward={reward:.3f} "
+                f"approx_kl=0.0{i+1} fps={1800 - i * 40}",
+                parent=root,
+            )
         await asyncio.sleep(_TICK)
 
     # Seeds finish.
@@ -245,10 +268,68 @@ async def run_local_sim_session(sid: str) -> None:
                  "metrics": {"best_reward": 0.81}})
 
 
+# ---- autonomous loop (dev stand-in for runner._advance_loop) -----------
+
+def _sim_round_metric(round_index: int) -> float:
+    """A best-metric that climbs each round, so the loop visibly improves and can
+    cross a goal_metric. Mirrors the shape of a real reward curve across rounds."""
+    return round(min(0.95, 0.45 + 0.18 * round_index), 3)
+
+
+async def run_local_sim_autonomous(sid: str) -> None:
+    """Drive an autonomous loop locally: play scripted rounds, applying the SAME stop
+    policy (loop_policy.decide) the real runner uses, until it halts. Emits
+    round_started / loop_stopped exactly like runner.loops so the loop UI can be
+    verified end to end without Cloud Run/Modal."""
+    session = await store.get_session(sid)
+    goal = session.goal if session else "Research goal"
+    r = store.get_redis()
+    while True:
+        loop = await store.get_loop(sid)
+        if loop is None or loop.status != LoopStatus.running:
+            break
+        round_index = len(loop.rounds) + 1
+        # Round 1 reuses the session's root job; later rounds get a fresh depth-0 job
+        # re-pointed as root (mirrors runner.loops._advance_loop).
+        if round_index == 1:
+            job_id = await store.get_root_job(sid)
+        else:
+            job_id = store.new_id("j")
+            await store.create_job(Job(
+                id=job_id, session_id=sid, depth=0, kind=JobKind.agent,
+                params={"goal": goal}, status=JobStatus.queued, backend="local"))
+            await store.set_loop_current_job(sid, job_id)
+            await r.json().set(store._session_key(sid), "$.root_job_id", job_id)
+        if not job_id:
+            break
+        await _emit(sid, job_id, 0, EventType.status,
+                    {"phase": "round_started", "round_index": round_index,
+                     "max_rounds": loop.max_rounds, "goal_metric": loop.goal_metric})
+        await run_local_sim_session(sid)
+        await store.append_round(sid, RoundRecord(
+            round_index=round_index, job_id=job_id,
+            best_metric=_sim_round_metric(round_index),
+            summary=f"round {round_index} complete"))
+        loop = await store.get_loop(sid)
+        budget_raw = await r.get(store._budget_key(sid))
+        budget = int(budget_raw) if budget_raw is not None else 1
+        decision = loop_policy.decide(loop, budget)
+        if decision.action == "stop":
+            await store.set_loop_status(sid, decision.status, decision.reason)
+            await _emit(sid, job_id, 0, EventType.status,
+                        {"phase": "loop_stopped", "status": decision.status.value,
+                         "reason": decision.reason, "round_index": len(loop.rounds),
+                         "max_rounds": loop.max_rounds, "goal_metric": loop.goal_metric})
+            break
+
+
 async def _guarded_run(sid: str) -> None:
     """Run a sim session; on failure, mark the root failed so the UI stops spinning."""
     try:
-        await run_local_sim_session(sid)
+        if await store.get_loop(sid) is not None:
+            await run_local_sim_autonomous(sid)
+        else:
+            await run_local_sim_session(sid)
     except Exception as e:  # noqa: BLE001
         print(f"[local_sim] run failed for {sid}: {e!r}")
         root = await store.get_root_job(sid)

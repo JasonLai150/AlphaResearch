@@ -53,7 +53,17 @@ async function jsonFetch<T>(
 }
 
 export function createSession(
-  input: { userId: string; goal: string; budget?: number },
+  input: {
+    userId: string;
+    goal: string;
+    budget?: number;
+    /** "autonomous" runs a research loop; omit/"oneshot" for a single run. */
+    mode?: "oneshot" | "autonomous";
+    /** Autonomous only: hard cap on rounds. */
+    maxRounds?: number;
+    /** Autonomous only: stop early once a round reaches this metric. */
+    goalMetric?: number;
+  },
   token?: string
 ) {
   return jsonFetch<{ session_id: string; root_job_id: string }>(
@@ -64,8 +74,23 @@ export function createSession(
         user_id: input.userId,
         goal: input.goal,
         budget: input.budget,
+        // Only send autonomous fields when in autonomous mode so the oneshot
+        // request stays unchanged and backend defaults still apply.
+        ...(input.mode ? { mode: input.mode } : {}),
+        ...(input.mode === "autonomous"
+          ? { max_rounds: input.maxRounds, goal_metric: input.goalMetric }
+          : {}),
       }),
     },
+    token
+  );
+}
+
+/** Request that an autonomous loop halt (takes effect at the next round boundary). */
+export function stopSession(sid: string, token?: string) {
+  return jsonFetch<{ stopped: boolean; reason?: string }>(
+    `/sessions/${sid}/stop`,
+    { method: "POST" },
     token
   );
 }

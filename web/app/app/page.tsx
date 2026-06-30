@@ -1,28 +1,42 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Menu, Network, Sparkles } from "lucide-react";
+import { toast } from "sonner";
 
+import { stopSession } from "@/lib/api";
+import { AgentGraph } from "@/components/agent-graph";
 import { useAppAuth } from "@/components/auth/app-auth";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ChatComposer } from "@/components/chat-composer";
 import { ChatTranscript } from "@/components/chat-transcript";
+import { ConsolePanel } from "@/components/console-panel";
 import { ContextBar } from "@/components/context-bar";
 import { Eyebrow } from "@/components/eyebrow";
+import { ResizeHandle } from "@/components/resize-handle";
 import { SessionHeader } from "@/components/session-header";
 import { TreePanel } from "@/components/tree-panel";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent } from "@/components/ui/sheet";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useChatSubmit } from "@/hooks/use-chat-submit";
+import { useResizablePane } from "@/hooks/use-resizable-pane";
 import { useSession } from "@/hooks/use-session";
 import { useSessions } from "@/hooks/use-sessions";
 import {
   artifactsOf,
+  consoleOf,
+  graphOf,
   rootJob,
   subagentsOf,
   treeOf,
 } from "@/lib/session-reducer";
+import { cn } from "@/lib/utils";
 import type { RepoContext, TranscriptItem } from "@/lib/types";
 
 export default function Page() {
@@ -30,6 +44,18 @@ export default function Page() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [treeOpen, setTreeOpen] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [graphOpen, setGraphOpen] = useState(false);
+  // Center pane: chat transcript vs. the lead agent's raw console.
+  const [view, setView] = useState<"chat" | "console">("chat");
+  // A selected sub-agent opens its own live console in a right drawer.
+  const [consoleJobId, setConsoleJobId] = useState<string | null>(null);
+
+  const {
+    width: sidebarWidth,
+    nudge: nudgeSidebar,
+    reset: resetSidebar,
+  } = useResizablePane({ key: "ar.sidebarWidth", min: 200, max: 480, initial: 264 });
 
   const { sessions, loading, refresh } = useSessions(userId, getToken);
   const { state, phase, notFound, reconnect } = useSession(activeId, getToken);
@@ -38,11 +64,27 @@ export default function Page() {
     setActiveId(id);
     setSidebarOpen(false);
     setTreeOpen(false);
+    setGraphOpen(false);
+    setView("chat");
+    setConsoleJobId(null);
     const url = new URL(window.location.href);
     if (id) url.searchParams.set("s", id);
     else url.searchParams.delete("s");
     window.history.replaceState({}, "", url.toString());
   }
+
+  const onStop = useCallback(async () => {
+    if (!activeId || stopping) return;
+    setStopping(true);
+    try {
+      await stopSession(activeId, await getToken());
+      toast.info("Stop requested — the loop halts at the next round boundary.");
+    } catch {
+      toast.error("Couldn't stop the loop.");
+    } finally {
+      setStopping(false);
+    }
+  }, [activeId, stopping, getToken]);
 
   const { busy, pending, optimistic, onSubmit, settle, reconcile } =
     useChatSubmit({
@@ -107,8 +149,12 @@ export default function Page() {
   };
 
   const tree = treeOf(state);
+  const graph = graphOf(state);
   const subagents = subagentsOf(state);
   const artifacts = artifactsOf(state);
+  const rootConsole = consoleOf(state, root?.id ?? null);
+  const selectedAgent = subagents.find((a) => a.id === consoleJobId) ?? null;
+  const drawerConsole = consoleOf(state, consoleJobId);
 
   const sidebar = (
     <AppSidebar
@@ -121,14 +167,30 @@ export default function Page() {
   );
 
   const rightRail = (
-    <TreePanel tree={tree} subagents={subagents} artifacts={artifacts} />
+    <TreePanel
+      tree={tree}
+      subagents={subagents}
+      artifacts={artifacts}
+      onExpand={() => setGraphOpen(true)}
+      onSelectAgent={setConsoleJobId}
+    />
   );
 
   return (
     <TooltipProvider delayDuration={150}>
       <div className="flex h-screen w-full overflow-hidden bg-canvas text-ink">
         {/* Desktop sidebar (≥ md). Below md it becomes a slide-over drawer. */}
-        <div className="hidden w-[264px] shrink-0 md:flex">{sidebar}</div>
+        <div
+          className="hidden shrink-0 md:flex"
+          style={{ width: sidebarWidth }}
+        >
+          {sidebar}
+        </div>
+        <ResizeHandle
+          className="hidden md:block"
+          onResize={nudgeSidebar}
+          onReset={resetSidebar}
+        />
         <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
           <SheetContent side="left" className="w-[300px] p-0">
             {sidebar}
@@ -177,16 +239,52 @@ export default function Page() {
                 startedAt={state.startedAt}
                 onReconnect={reconnect}
                 notFound={notFound}
+                loop={state.loop}
+                onStop={onStop}
+                stopping={stopping}
               />
               {!notFound && (
                 <>
                   <ContextBar ctx={ctx} />
-                  <ChatTranscript items={items} running={running} />
-                  <ChatComposer
-                    onSubmit={onSubmit}
-                    busy={busy}
-                    placeholder="Reply to the lead agent…"
-                  />
+                  {/* Chat (lead narration) vs. raw console (the operational
+                      stdout/stderr that used to die in the Cloud Run log). */}
+                  <div className="flex items-center gap-1 border-b border-hairline px-4">
+                    {(["chat", "console"] as const).map((v) => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => setView(v)}
+                        className={cn(
+                          "relative px-3 py-2 text-[13px] transition-colors focus-visible:outline-none",
+                          view === v
+                            ? "text-ink"
+                            : "text-mute hover:text-body"
+                        )}
+                      >
+                        {v === "chat" ? "Chat" : "Console"}
+                        {view === v && (
+                          <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-sunset" />
+                        )}
+                      </button>
+                    ))}
+                    {view === "console" && rootConsole.length > 0 && (
+                      <span className="ml-auto font-mono text-[11px] text-mute">
+                        {rootConsole.length} lines
+                      </span>
+                    )}
+                  </div>
+                  {view === "chat" ? (
+                    <>
+                      <ChatTranscript items={items} running={running} />
+                      <ChatComposer
+                        onSubmit={onSubmit}
+                        busy={busy}
+                        placeholder="Reply to the lead agent…"
+                      />
+                    </>
+                  ) : (
+                    <ConsolePanel lines={rootConsole} />
+                  )}
                 </>
               )}
             </>
@@ -207,6 +305,7 @@ export default function Page() {
                 <ChatComposer
                   onSubmit={onSubmit}
                   busy={busy}
+                  allowAutonomous
                   placeholder="e.g. Improve PPO sample efficiency on MiniGrid-DoorKey-8x8…"
                   hint="Press Enter to start the run"
                 />
@@ -222,7 +321,33 @@ export default function Page() {
             {rightRail}
           </SheetContent>
         </Sheet>
+
+        {/* A selected sub-agent's live console (its raw stdout/stderr). */}
+        <Sheet
+          open={!!consoleJobId}
+          onOpenChange={(open) => !open && setConsoleJobId(null)}
+        >
+          <SheetContent
+            side="right"
+            className="flex w-full flex-col p-0 sm:max-w-[560px]"
+          >
+            <SheetHeader className="space-y-0 border-b border-hairline px-4 py-3 text-left">
+              <SheetTitle className="text-[13px] font-normal text-ink">
+                {selectedAgent
+                  ? `${selectedAgent.name} · ${selectedAgent.kind}`
+                  : "Console"}
+                <span className="ml-2 font-mono text-[11px] uppercase tracking-wider text-mute">
+                  console
+                </span>
+              </SheetTitle>
+            </SheetHeader>
+            <ConsolePanel lines={drawerConsole} />
+          </SheetContent>
+        </Sheet>
       </div>
+      {graphOpen && (
+        <AgentGraph graph={graph} goal={state.goal} onClose={() => setGraphOpen(false)} />
+      )}
     </TooltipProvider>
   );
 }

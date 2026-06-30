@@ -18,6 +18,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -27,6 +28,7 @@ _HOOKS = str(Path(__file__).resolve().parent / ".claude" / "hooks")
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, _HOOKS)
 from _push import push  # noqa: E402  (stdlib-only HTTP helper, shared with hooks)
+from console_relay import make_console_sender, relay_console  # noqa: E402
 from stream_relay import relay  # noqa: E402
 
 _BOOTSTRAP_ATTEMPTS = 5
@@ -55,8 +57,30 @@ def _bootstrap(runner_url: str, token: str) -> dict:
     raise SystemExit(f"[launch] bootstrap failed after {_BOOTSTRAP_ATTEMPTS}: {last!r}")
 
 
+def _chat_prompt(goal: str, ctx: dict) -> str:
+    """A follow-up conversational turn: answer the user's new message grounded in the
+    session so far. NOT a fresh research run — don't replan or dispatch unless asked."""
+    convo = ctx.get("conversation") or []
+    history = "\n".join(
+        f"{m.get('role', '?')}: {(m.get('content') or '').strip()}" for m in convo
+    ) or "(no prior turns)"
+    message = (ctx.get("message") or "").strip()
+    return (
+        "You are the research director, continuing a conversation with the user about "
+        f"this session.\n\nSession goal:\n{goal}\n\n"
+        f"Conversation so far:\n{history}\n\n"
+        f"The user just said:\n{message}\n\n"
+        "Respond directly and concisely, grounded in this session's results and the "
+        "conversation above. This is a CHAT turn — do NOT start a new research plan or "
+        "dispatch sub-agents unless the user explicitly asks you to run more experiments. "
+        "Answer, then exit. Never block waiting for user input."
+    )
+
+
 def _prompt(ctx: dict) -> str:
     goal = (ctx.get("goal") or "").strip()
+    if ctx.get("mode") == "chat":
+        return _chat_prompt(goal, ctx)
     base = (
         "You are the research director for an autonomous RL research session.\n\n"
         f"The user's goal:\n{goal}\n\n"
@@ -170,11 +194,28 @@ def main() -> None:
     except ValueError:
         depth = 0
 
-    # Spawn claude (don't exec) so we can tail its stream-json stdout and relay
-    # assistant text deltas to the runner. stderr inherits -> Cloud Run logs.
-    # _prompt takes the full bootstrap ctx (it's autonomous-loop aware via ctx["loop"]).
+    # Spawn claude (don't exec) so we can tail BOTH pipes: stdout's stream-json
+    # becomes assistant token/transcript events; stderr (the operational console
+    # — diagnostics, tracebacks) used to inherit straight to the Cloud Run log and
+    # "die" there. Now we PIPE it and relay each line to the bus as a `console`
+    # event, while a tee mirrors it to the real stderr so Cloud Run logs are kept.
+    # Both pipes are drained concurrently (a single pipe read would deadlock the
+    # other). _prompt is autonomous-loop aware via ctx["loop"].
     argv = _build_argv(_prompt(ctx), model)
-    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, text=True, bufsize=1)
+    proc = subprocess.Popen(
+        argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1
+    )
+    # Console pushes go through a non-blocking, drop-oldest sender so a slow/dead
+    # runner can never back-pressure the stderr pipe and stall claude.
+    sender = make_console_sender(push)
+    stderr_thread = threading.Thread(
+        target=relay_console,
+        args=(proc.stderr, sender.emit),
+        kwargs=dict(session_id=session_id, job_id=job_id, depth=depth,
+                    stream="stderr", tee=sys.stderr),
+        daemon=True,
+    )
+    stderr_thread.start()
     relay_exc: Exception | None = None
     try:
         relay(proc.stdout, push, session_id=session_id, job_id=job_id, depth=depth)
@@ -184,6 +225,10 @@ def main() -> None:
         if proc.stdout is not None:
             proc.stdout.close()
         rc = proc.wait()
+        # claude has exited → its stderr pipe is at EOF, so the relay thread
+        # finishes promptly; join unbounded, then drain the sender (bounded).
+        stderr_thread.join()
+        sender.close()
     if relay_exc is not None:
         print(f"[launch] relay error: {relay_exc!r}", file=sys.stderr)
     sys.exit(rc)

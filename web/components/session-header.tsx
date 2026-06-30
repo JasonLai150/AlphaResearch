@@ -1,6 +1,15 @@
 import { StatusDot } from "@/components/status-dot";
 import { cn } from "@/lib/utils";
-import type { AgentStatus, ConnPhase } from "@/lib/types";
+import type { AgentStatus, ConnPhase, LoopView } from "@/lib/types";
+
+/** Human label for a terminal loop status badge. */
+const LOOP_STATUS_LABEL: Record<string, string> = {
+  running: "running",
+  completed: "completed",
+  stopped: "stopped",
+  budget_exhausted: "budget spent",
+  failed: "failed",
+};
 
 /** Compact relative-time, e.g. "3m", "2h", "5d". Falls back to "" if unparseable. */
 function relTime(iso: string): string {
@@ -24,6 +33,9 @@ export function SessionHeader({
   startedAt,
   onReconnect,
   notFound,
+  loop,
+  onStop,
+  stopping,
 }: {
   goal?: string;
   status?: AgentStatus;
@@ -31,6 +43,12 @@ export function SessionHeader({
   startedAt?: string;
   onReconnect?: () => void;
   notFound?: boolean;
+  /** Autonomous loop state, when this is an autonomous session. */
+  loop?: LoopView;
+  /** Halt the loop (only shown while it is running). */
+  onStop?: () => void;
+  /** True while the stop request is in flight. */
+  stopping?: boolean;
 }) {
   if (notFound) {
     return (
@@ -66,6 +84,38 @@ export function SessionHeader({
           <span className="ml-2 text-[12px] text-mute">· started {rel} ago</span>
         )}
       </h2>
+      {loop && (
+        <span
+          className="shrink-0 font-mono text-[11px] uppercase tracking-wider text-body"
+          title={loop.goalMetric != null ? `target metric ${loop.goalMetric}` : undefined}
+        >
+          Round {loop.round} / {loop.maxRounds}
+        </span>
+      )}
+      {loop && loop.status === "running" && onStop && (
+        <button
+          type="button"
+          onClick={onStop}
+          disabled={stopping}
+          className={cn(
+            "shrink-0 rounded-full border border-hairline bg-canvas-soft px-2.5 py-0.5",
+            "font-mono text-[11px] uppercase tracking-wider text-body",
+            "transition-colors hover:bg-canvas-card hover:text-ink",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            "disabled:opacity-50"
+          )}
+        >
+          {stopping ? "Stopping…" : "Stop loop"}
+        </button>
+      )}
+      {loop && loop.status !== "running" && (
+        <span
+          className="shrink-0 font-mono text-[11px] uppercase tracking-wider text-mute"
+          title={loop.reason}
+        >
+          loop {LOOP_STATUS_LABEL[loop.status] ?? loop.status}
+        </span>
+      )}
       {disconnected && onReconnect && (
         <button
           type="button"

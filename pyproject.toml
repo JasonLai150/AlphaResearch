@@ -17,6 +17,7 @@ dependencies = [
     "tenacity>=9.0",
     "google-cloud-storage>=2.18",
     "google-cloud-run>=0.10",
+    "google-cloud-logging>=3.11",
     "orjson>=3.10",
 ]
 

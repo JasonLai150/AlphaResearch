@@ -37,6 +37,9 @@ from infra.schemas import (
 
 router = APIRouter(prefix="/internal", tags=["internal"])
 
+# How many recent transcript turns to hand a chat turn for context.
+_CHAT_CONTEXT_TURNS = 30
+
 
 @dataclass
 class Caller:
@@ -89,6 +92,18 @@ async def get_bootstrap(caller: Caller = Depends(require_caller)) -> dict:
         "mode": doc.get("mode", "oneshot"),
         "depth": 0,
     }
+    # Chat turn: a user follow-up was staged by the runner's chat_loop. Hand this turn
+    # the new message + recent transcript so it answers conversationally (not a fresh
+    # research run). Popped so a bootstrap retry can't re-answer the same message.
+    pending = await store.pop_pending_chat(sid)
+    if pending:
+        msgs = await store.read_transcript(sid)
+        out["mode"] = "chat"
+        out["message"] = pending
+        out["conversation"] = [
+            {"role": m.role, "content": m.content} for m in msgs[-_CHAT_CONTEXT_TURNS:]
+        ]
+        return out
     # Autonomous loop: tell the agent which round it's on + prior rounds' bests, so it
     # can deepen/escalate instead of replanning blind. (The runner owns the stop
     # decision; this is read-only context for the round.)

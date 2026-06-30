@@ -344,6 +344,12 @@ async def release_fanout(parent_job_id: str) -> None:
 
 async def emit_event(event: EventEnvelope) -> str:
     """XADD to the session event Stream. Returns the (monotonic) entry id."""
+    # NOTE: the stream is intentionally NOT trimmed here. The frontend rebuilds
+    # ALL view state by replaying this stream from "0" (see web/hooks/use-session.ts),
+    # so a MAXLEN trim would silently drop chat/token history on reconnect. Console
+    # streaming raises per-session volume; bounding it properly means a SEPARATE,
+    # independently-capped console stream (+ its own SSE channel) — tracked as a
+    # follow-up rather than capping the replay-critical events stream.
     return await get_redis().xadd(
         _events_key(event.session_id), {"data": event.model_dump_json()}
     )
@@ -500,6 +506,34 @@ async def enqueue_chat(session_id: str, content: str) -> str:
     )
 
 
+# The pending chat message for a session's next agent turn. The chat_loop sets it
+# right before re-spawning the lead agent; /internal/bootstrap pops it so that turn
+# answers it (and a bootstrap retry can't re-answer). TTL guards against a spawn
+# that never boots leaving a stale message behind.
+_PENDING_CHAT_TTL = 6 * 3600
+
+
+def _pending_chat_key(sid: str) -> str:
+    return f"session:{sid}:pending_chat"
+
+
+async def set_pending_chat(session_id: str, content: str) -> None:
+    await get_redis().set(_pending_chat_key(session_id), content, ex=_PENDING_CHAT_TTL)
+
+
+async def get_pending_chat(session_id: str) -> str | None:
+    return await get_redis().get(_pending_chat_key(session_id))
+
+
+async def pop_pending_chat(session_id: str) -> str | None:
+    r = get_redis()
+    async with r.pipeline(transaction=True) as p:
+        p.get(_pending_chat_key(session_id))
+        p.delete(_pending_chat_key(session_id))
+        content, _ = await p.execute()
+    return content
+
+
 # ---- generic stream read / ack -----------------------------------------
 
 async def read_stream(
@@ -636,6 +670,10 @@ async def read_full_session(sid: str) -> dict:
             tree[jid] = kids
         artifacts.extend(a.model_dump(mode="json") for a in await list_artifacts_for(jid))
     transcript = [m.model_dump(mode="json") for m in await read_transcript(sid)]
+    # Autonomous sessions carry a Loop record; oneshot sessions have none (null).
+    # The UI seeds its loop view from this so a reload shows round/status before the
+    # event stream replays.
+    loop = await get_loop(sid)
     return {
         "session": session_doc,
         "jobs": jobs,
@@ -643,6 +681,7 @@ async def read_full_session(sid: str) -> dict:
         "tree": tree,
         "transcript": transcript,
         "artifacts": artifacts,
+        "loop": loop.model_dump(mode="json") if loop else None,
     }
 
 

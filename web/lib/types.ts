@@ -7,7 +7,8 @@ export type EventType =
   | "artifact"
   | "summary"
   | "error"
-  | "token";
+  | "token"
+  | "console";
 
 export interface EventEnvelope {
   session_id: string;
@@ -97,6 +98,27 @@ export interface Subagent {
   rewards?: MetricPoint[];
 }
 
+/** A node in the force-directed agent graph (derived from SessionState). */
+export interface GraphNode {
+  id: string;
+  label: string;
+  kind: string;
+  status: AgentStatus;
+  depth: number;
+  isRoot: boolean;
+  reward?: number;
+  rewards: MetricPoint[];
+  lastLine?: string;
+  streaming?: boolean;
+}
+
+/** A parent→child edge; `active` is true while the child job is running. */
+export interface GraphLink {
+  source: string;
+  target: string;
+  active: boolean;
+}
+
 export interface CurrentUser {
   name: string;
   handle: string;
@@ -156,6 +178,19 @@ export interface WireMessage {
   ts: string;
 }
 
+/** Autonomous loop snapshot from read_full_session (mirrors infra/schemas.py Loop). */
+export interface WireLoop {
+  session_id: string;
+  status: LoopStatus;
+  max_rounds: number;
+  goal_metric: number | null;
+  plateau_k: number;
+  stop_requested: boolean;
+  current_job_id: string | null;
+  stop_reason: string;
+  rounds: { round_index: number; best_metric: number | null }[];
+}
+
 export interface FullSession {
   session: WireSession | null;
   jobs: WireJob[];
@@ -163,6 +198,8 @@ export interface FullSession {
   tree: Record<string, string[]>;
   transcript: WireMessage[];
   artifacts: WireArtifact[];
+  /** Null for oneshot sessions. */
+  loop?: WireLoop | null;
 }
 
 // ─── Live view models (built by the reducer from the event stream) ───────────
@@ -170,6 +207,26 @@ export interface FullSession {
 export interface MetricPoint {
   step: number;
   reward: number;
+}
+
+// Mirror of infra/schemas.py LoopStatus.
+export type LoopStatus =
+  | "running"
+  | "completed"
+  | "stopped"
+  | "budget_exhausted"
+  | "failed";
+
+/** Live view of an autonomous session's research loop, folded from round_started /
+ *  loop_stopped status events (and seeded from the /full snapshot on resume). */
+export interface LoopView {
+  /** Current round index (1-based). */
+  round: number;
+  maxRounds: number;
+  goalMetric?: number | null;
+  status: LoopStatus;
+  /** Why the loop stopped (only set once terminal). */
+  reason?: string;
 }
 
 export interface JobView {
@@ -186,6 +243,20 @@ export interface JobView {
   artifacts: WireArtifact[];
   /** Insertion order, for stable sibling labels (A/B/C). */
   order: number;
+  /** Latest job-scoped activity line (from log/token/summary), for the graph node. */
+  lastLine?: string;
+  /** True while token deltas for this job are mid-flight (drives the node caret). */
+  streaming?: boolean;
+  /** Raw stdout/stderr console lines for this job (from `console` events). */
+  console?: ConsoleLine[];
+}
+
+/** One raw console line streamed from an agent's child process. */
+export interface ConsoleLine {
+  /** Stable, unique id for React keys (derived from the monotonic seq). */
+  id: string;
+  stream: "stdout" | "stderr";
+  line: string;
 }
 
 export interface TranscriptItem {
@@ -220,6 +291,8 @@ export interface SessionState {
   backend?: string;
   /** Session mode, populated from spawn/status payloads when present. */
   mode?: string;
+  /** Autonomous loop state, when the session is an autonomous loop. */
+  loop?: LoopView;
 }
 
 /** SSE connection lifecycle, surfaced to the UI. */
