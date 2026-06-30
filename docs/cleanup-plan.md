@@ -4,6 +4,12 @@ Goal: cut sponsor-integration fat so the core (web → orchestrator → Redis �
 Modal/CloudRun → results) is the only thing left to reason about. Each cut is an
 independent, shippable step on its own branch; tests stay green between steps.
 
+> **Status (branch `chore/cut-sponsor-fat`):** Cut 1 (`8ec629d`) + Cut 2 (`3ccd7bb`) DONE.
+> Suite: 252 → 223 passing (drop = removed integration tests). **Deviation:** `scrub()`
+> was cut too — its only caller turned out to be the Sentry breadcrumb, so keeping it
+> would have left a util with zero call sites (dead code), not the "real" use the plan
+> assumed.
+
 Order: **Browserbase → wandb → Sentry/OTEL** (low → higher coupling). wandb +
 Browserbase share `capture_wandb.py`, so they collapse into one combined cut in practice.
 
